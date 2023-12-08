@@ -52,6 +52,9 @@ impl<E: Endian> U16<E> {
     pub fn new(e: E, n: u16) -> Self {
         Self(e.u16_bytes(n), PhantomData)
     }
+    pub fn bytes(self) -> [u8; 2] {
+        self.0
+    }
 }
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +62,9 @@ pub struct U32<E: Endian>([u8; 4], PhantomData<E>);
 impl<E: Endian> U32<E> {
     pub fn new(e: E, n: u32) -> Self {
         Self(e.u32_bytes(n), PhantomData)
+    }
+    pub fn bytes(self) -> [u8; 4] {
+        self.0
     }
 }
 

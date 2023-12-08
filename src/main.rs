@@ -1,35 +1,35 @@
 mod elf;
-use std::{ffi::CString, io::Write};
 
 use elf::*;
 
 mod program;
 use program::*;
 
+mod parser;
+use parser::*;
+
 fn program<E: Endian>(e: E) -> Program {
+    let code = std::fs::read_to_string("main.kx").unwrap();
+    let parser = Tokenizer::new(&code);
+
+    let tokens = parser.collect::<Vec<Token>>();
+
     let mut program = Program { code: vec![] };
-    let string = CString::new("HELLO WORLD FROM KALX\n").unwrap();
+    match tokens[..] {
+        [Token::Exit, Token::Number(num), Token::Semicolon] => {
+            program = program.exit(U32::new(e, num as u32).bytes());
+        }
+        _ => {
+            panic!("unkown sequence of tokens");
+        }
+    }
     program
-        .code
-        .extend_from_slice(&[0xB8, 0x04, 0x00, 0x00, 0x00]); // eax <- 4 (write)
-    program
-        .code
-        .extend_from_slice(&[0xBB, 0x01, 0x00, 0x00, 0x00]); // ebx <- 1 (stdout)
-    program
-        .code
-        .extend_from_slice(&[0xB9, 0x76, 0x80, 0x04, 0x08]); // ecx <- buf
-
-    let count = e.u32_bytes(string.as_bytes_with_nul().len() as u32);
-    program
-        .code
-        .extend_from_slice(&[0xBA, count[0], count[1], count[2], count[3]]); // edx <- count
-
-    program.syscall().exit(e.u32_bytes(69)).string(&string)
 }
 
 fn run<E: Endian>(e: E) {
     let ehsize = std::mem::size_of::<ELFHeader32<E>>();
     let phsize = std::mem::size_of::<ProgramHeader32<E>>();
+    let shsize = std::mem::size_of::<SectionHeader32<E>>();
     let offset = ehsize + phsize;
     let entry = 0x08048000 + offset;
     // let entry = 0x08000000 + offset;
@@ -46,10 +46,11 @@ fn run<E: Endian>(e: E) {
         ehsize: U16::new(e, ehsize as u16),    // own size
         phentsize: U16::new(e, phsize as u16), // ph size
         phnum: U16::new(e, 1),                 // 1
-        shentsize: U16::new(e, std::mem::size_of::<SectionHeader32<E>>() as u16), // sh size
+        shentsize: U16::new(e, shsize as u16), // sh size
         shnum: U16::new(e, 0),                 // none
         shstrndx: U16::new(e, 0),              //none
     };
+
     let program: &[u8] = &program(e).code;
 
     let size = program.len() as u32;
@@ -63,13 +64,8 @@ fn run<E: Endian>(e: E) {
         flags: U32::new(e, 1 | 4), // EXEC and READ
         align: U32::new(e, 0x1000),
     };
-    use std::os::unix::fs::PermissionsExt;
-    let mut file = std::fs::File::create("out").unwrap();
-    let mut perms = file.metadata().unwrap().permissions();
-    perms.set_mode(0o775);
-    file.set_permissions(perms).unwrap();
 
-    file.write_all(
+    write(
         &elf.bytes()
             .into_iter()
             .copied()
@@ -77,12 +73,22 @@ fn run<E: Endian>(e: E) {
             .chain(program.into_iter().copied())
             .collect::<Vec<u8>>(),
     )
-    .unwrap();
+}
+
+fn write(bytes: &[u8]) {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut file = std::fs::File::create("out").unwrap();
+    let mut perms = file.metadata().unwrap().permissions();
+    perms.set_mode(0o775);
+    file.set_permissions(perms).unwrap();
+
+    file.write_all(bytes).unwrap();
 }
 
 fn main() {
-    // dbg!(0x54.ex);
-
     let e = LittleEndian;
+
     run(e);
 }
