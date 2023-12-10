@@ -1,32 +1,32 @@
-use std::{iter::Peekable, str::CharIndices};
+use std::{iter::Peekable, rc::Rc, str::CharIndices};
 
 #[derive(Debug, Clone)]
-pub enum Token<'a> {
+pub enum Token {
     Var,
     Exit,
     Print,
-    Ident(&'a str),
+    Ident(Rc<String>),
     Number(u32),
-    String(String),
+    String(Rc<String>),
     // symbols
     Semicolon,
     Equal,
 }
-impl<'a> Token<'a> {
+impl Token {
     /// doesn't do symbols
-    fn parse(token: &'a str) -> Option<Self> {
-        let token = match token {
+    fn parse(token: String) -> Option<Self> {
+        let token = match token.as_str() {
             "exit" => Self::Exit,
             "var" => Self::Var,
             "print" => Self::Print,
             _ => {
                 if token.starts_with('"') && token.ends_with('"') {
                     let string = token.trim_matches('"').replace("\\n", "\n");
-                    Self::String(string)
-                } else if let Ok(num) = u32::from_str_radix(token, 10) {
+                    Self::String(Rc::new(string))
+                } else if let Ok(num) = u32::from_str_radix(&token, 10) {
                     Self::Number(num)
                 } else {
-                    Self::Ident(token)
+                    Self::Ident(Rc::new(token))
                 }
             }
         };
@@ -55,7 +55,7 @@ impl<'a> Tokenizer<'a> {
     }
 }
 impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Token<'a>;
+    type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
         // strip leading whitespace
@@ -90,6 +90,6 @@ impl<'a> Iterator for Tokenizer<'a> {
         }
 
         let token = &self.code[start..=end];
-        Token::parse(token)
+        Token::parse(String::from(token))
     }
 }

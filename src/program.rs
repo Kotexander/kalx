@@ -44,9 +44,9 @@ impl<E: Endian> Program<E> {
         self
     }
     pub fn exit(self, code: u32) -> Self {
-        self.mov_ebx_imm(code) // arg0
+        self.mov_ebx_imm(code) // code
             .mov_eax_imm(0x01) // exit
-            .syscall() // execute
+            .syscall()
     }
     pub fn write(self, addr: u32, size: u32) -> Self {
         self.mov_ebx_imm(0x01) // stdout

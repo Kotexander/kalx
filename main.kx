@@ -1,7 +1,8 @@
-var hello = "Hello world\n";
-var bye = "Good bye\n";
+var hello = "Hello world!\n";
+var bye = "Goodbye world!\n";
 
 print hello;
 print bye;
+print hello;
 
-exit 69;
+exit 0;
