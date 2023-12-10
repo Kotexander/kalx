@@ -157,11 +157,11 @@ pub struct ProgramHeader32<E: Endian> {
     /// * 1 for loadable segment
     /// * 2 for dynamic linking information
     /// * 3 for interpreter information
-    /// * 4 for auxiliart information
+    /// * 4 for auxiliary information
     /// * 6 for program header table
     /// * 7 for thread-local storage template
     pub typ: U32<E>,
-    /// file image
+    /// where the file image is from in the file
     pub offset: U32<E>,
     /// virtual address
     pub vaddr: U32<E>,

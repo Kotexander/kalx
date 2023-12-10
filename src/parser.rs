@@ -1,17 +1,47 @@
 use std::{iter::Peekable, str::CharIndices};
 
-#[derive(Debug, Clone, Copy)]
-pub enum Token {
+#[derive(Debug, Clone)]
+pub enum Token<'a> {
+    Var,
     Exit,
-    Semicolon,
+    Print,
+    Ident(&'a str),
     Number(u32),
+    String(String),
+    // symbols
+    Semicolon,
+    Equal,
 }
-
-fn symbol(c: char) -> Option<Token> {
-    if c == ';' {
-        return Some(Token::Semicolon);
+impl<'a> Token<'a> {
+    /// doesn't do symbols
+    fn parse(token: &'a str) -> Option<Self> {
+        let token = match token {
+            "exit" => Self::Exit,
+            "var" => Self::Var,
+            "print" => Self::Print,
+            _ => {
+                if token.starts_with('"') && token.ends_with('"') {
+                    let string = token.trim_matches('"').replace("\\n", "\n");
+                    Self::String(string)
+                } else if let Ok(num) = u32::from_str_radix(token, 10) {
+                    Self::Number(num)
+                } else {
+                    Self::Ident(token)
+                }
+            }
+        };
+        Some(token)
     }
-    return None;
+    fn symbol(sym: char) -> Option<Self> {
+        let sym = match sym {
+            ';' => Token::Semicolon,
+            '=' => Token::Equal,
+            _ => {
+                return None;
+            }
+        };
+        Some(sym)
+    }
 }
 
 pub struct Tokenizer<'a> {
@@ -25,7 +55,7 @@ impl<'a> Tokenizer<'a> {
     }
 }
 impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Token;
+    type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // strip leading whitespace
@@ -39,31 +69,27 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         let (start, c) = self.code_chars.next()?;
 
-        let sym = symbol(c);
+        let sym = Token::symbol(c);
         if sym.is_some() {
             return sym;
         }
-
         let mut end = start;
 
+        let is_string = c == '"';
+
         while let Some((_i, c)) = self.code_chars.peek() {
-            if c.is_whitespace() || symbol(*c).is_some() {
+            if !is_string && (c.is_whitespace() || Token::symbol(*c).is_some()) {
                 break;
             }
-            let (i, _c) = self.code_chars.next().unwrap();
+            let (i, c) = self.code_chars.next().unwrap();
             end = i;
+
+            if is_string && c == '"' {
+                break;
+            }
         }
 
         let token = &self.code[start..=end];
-
-        match u32::from_str_radix(token, 10) {
-            Ok(n) => Some(Token::Number(n)),
-            Err(_) => match token {
-                "exit" => Some(Token::Exit),
-                _ => {
-                    panic!("unknown token: {token}")
-                }
-            },
-        }
+        Token::parse(token)
     }
 }

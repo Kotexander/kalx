@@ -1,1 +1,7 @@
-exit 0;
+var hello = "Hello world\n";
+var bye = "Good bye\n";
+
+print hello;
+print bye;
+
+exit 69;
