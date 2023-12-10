@@ -14,29 +14,34 @@ impl<E: Endian> Program<E> {
             e,
         }
     }
-    pub fn imm(mut self, n: u32) -> Self {
-        self.code.extend_from_slice(&self.e.u32_bytes(n));
+    pub fn imm(mut self, imm: u32) -> Self {
+        self.code.extend_from_slice(&self.e.u32_bytes(imm));
         self
     }
     pub fn string(mut self, string: &CStr) -> Self {
         self.code.extend_from_slice(string.to_bytes_with_nul());
         self
     }
-    pub fn mov_eax_imm(mut self, n: u32) -> Self {
+    pub fn jmp_rel(mut self, rel: i8) -> Self {
+        self.code.push(0xEB);
+        self.code.push(rel as u8);
+        self
+    }
+    pub fn mov_eax_imm(mut self, imm: u32) -> Self {
         self.code.push(0xB8);
-        self.imm(n)
+        self.imm(imm)
     }
-    pub fn mov_ebx_imm(mut self, n: u32) -> Self {
+    pub fn mov_ebx_imm(mut self, imm: u32) -> Self {
         self.code.push(0xBB);
-        self.imm(n)
+        self.imm(imm)
     }
-    pub fn mov_ecx_imm(mut self, n: u32) -> Self {
+    pub fn mov_ecx_imm(mut self, imm: u32) -> Self {
         self.code.push(0xB9);
-        self.imm(n)
+        self.imm(imm)
     }
-    pub fn mov_edx_imm(mut self, n: u32) -> Self {
+    pub fn mov_edx_imm(mut self, imm: u32) -> Self {
         self.code.push(0xBA);
-        self.imm(n)
+        self.imm(imm)
     }
 
     pub fn syscall(mut self) -> Self {

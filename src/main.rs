@@ -7,125 +7,10 @@ use elf::*;
 mod program;
 use program::*;
 
+mod tokenizer;
+
 mod parser;
 use parser::*;
-
-#[derive(Debug, Clone)]
-enum Instruction {
-    Assign { id: Rc<String>, value: Rc<String> },
-    Exit { num: u32 },
-    Print { id: Rc<String> },
-    Binary { lhs: Rc<Self>, rhs: Rc<Self> },
-}
-
-#[derive(Debug, Clone)]
-enum AST {
-    Instruction(Rc<Instruction>),
-}
-impl From<Instruction> for AST {
-    fn from(value: Instruction) -> Self {
-        Self::Instruction(Rc::new(value))
-    }
-}
-impl From<Rc<Instruction>> for AST {
-    fn from(value: Rc<Instruction>) -> Self {
-        Self::Instruction(value.clone())
-    }
-}
-#[derive(Debug, Clone)]
-enum Node {
-    Token(Token),
-    AST(AST),
-}
-impl From<Token> for Node {
-    fn from(value: Token) -> Self {
-        Self::Token(value)
-    }
-}
-impl From<AST> for Node {
-    fn from(value: AST) -> Self {
-        Self::AST(value)
-    }
-}
-#[derive(Debug, Clone)]
-struct Nodes {
-    nodes: Vec<Node>,
-}
-impl Nodes {
-    fn new() -> Self {
-        Self { nodes: Vec::new() }
-    }
-    fn reduce(&mut self, offset: usize) {
-        self.nodes.truncate(self.nodes.len() - offset);
-    }
-    fn push(&mut self, node: impl Into<Node>) {
-        let node = node.into();
-        self.nodes.push(node);
-    }
-}
-
-fn parse(code: &str) -> Rc<Instruction> {
-    let tokenizer = Tokenizer::new(code);
-
-    let mut nodes = Nodes::new();
-
-    for token in tokenizer {
-        nodes.push(token);
-
-        loop {
-            let repeat = match &nodes.nodes[..] {
-                [.., Node::Token(Token::Exit), Node::Token(Token::Number(num)), Node::Token(Token::Semicolon)] =>
-                {
-                    let node: AST = Instruction::Exit { num: *num }.into();
-                    nodes.reduce(3);
-                    nodes.push(node);
-                    true
-                }
-                [.., Node::Token(Token::Print), Node::Token(Token::Ident(id)), Node::Token(Token::Semicolon)] =>
-                {
-                    let node: AST = Instruction::Print { id: id.clone() }.into();
-                    nodes.reduce(3);
-                    nodes.push(node);
-                    true
-                }
-                [.., Node::Token(Token::Var), Node::Token(Token::Ident(id)), Node::Token(Token::Equal), Node::Token(Token::String(string)), Node::Token(Token::Semicolon)] =>
-                {
-                    let node: AST = Instruction::Assign {
-                        id: id.clone(),
-                        value: string.clone(),
-                    }
-                    .into();
-                    nodes.reduce(5);
-                    nodes.push(node);
-                    true
-                }
-                [.., Node::AST(AST::Instruction(lhs)), Node::AST(AST::Instruction(rhs))] => {
-                    let node: AST = Instruction::Binary {
-                        lhs: lhs.clone(),
-                        rhs: rhs.clone(),
-                    }
-                    .into();
-                    nodes.reduce(2);
-                    nodes.push(node);
-                    true
-                }
-                _ => false,
-            };
-            if !repeat {
-                break;
-            }
-        }
-    }
-
-    if nodes.nodes.len() != 1 {
-        panic!("node stream is not 1:\n{nodes:#?}");
-    }
-    if let Node::AST(AST::Instruction(i)) = nodes.nodes.pop().unwrap() {
-        i
-    } else {
-        panic!("last node is not AST:\n{nodes:#?}");
-    }
-}
 
 fn generate_code<E: Endian>(
     program: Program<E>,
@@ -143,6 +28,17 @@ fn generate_code<E: Endian>(
             let p = generate_code(program, string_info, lhs);
             generate_code(p, string_info, rhs)
         }
+        Instruction::Loop { block } => {
+            let start = program.code.len() as i32;
+            let p = if let Some(block) = block {
+                generate_code(program, string_info, block)
+            } else {
+                program
+            };
+            let end = (p.code.len() + 2) as i32;
+            let rel = (start - end) as i8;
+            p.jmp_rel(rel)
+        }
     }
 }
 fn find_global_variables(
@@ -157,7 +53,13 @@ fn find_global_variables(
             find_global_variables(global_strings, lhs);
             find_global_variables(global_strings, rhs);
         }
-        _ => {}
+        Instruction::Exit { num: _ } => {}
+        Instruction::Print { id: _ } => {}
+        Instruction::Loop { block } => {
+            if let Some(block) = block {
+                find_global_variables(global_strings, block);
+            }
+        }
     }
 }
 
@@ -184,7 +86,7 @@ fn program<E: Endian>(e: E, entry: u32, instruction: &Instruction) -> (Program<E
 
 fn run<E: Endian>(e: E) {
     let code = std::fs::read_to_string("main.kx").unwrap();
-    let instruction = parse(&code);
+    let instruction = parse(&code).unwrap();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
     let phsize = std::mem::size_of::<ProgramHeader32<E>>() as u32;
