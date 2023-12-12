@@ -1,5 +1,25 @@
 use std::{iter::Peekable, rc::Rc, str::CharIndices};
 
+#[derive(Debug, Clone, Copy)]
+pub enum Type {
+    String,
+    I32,
+    U32,
+}
+impl Type {
+    pub fn parse(typ: &str) -> Option<Self> {
+        let typ = match typ {
+            "u32" => Self::U32,
+            "i32" => Self::I32,
+            "str" => Self::String,
+            _ => {
+                return None;
+            }
+        };
+        Some(typ)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Token {
     Var,
@@ -9,8 +29,10 @@ pub enum Token {
     Ident(Rc<String>),
     Number(u32),
     String(Rc<String>),
+    Type(Type),
     // symbols
     Semicolon,
+    Colon,
     Equal,
     Open,
     Close,
@@ -29,6 +51,10 @@ impl Token {
                     let string = token.trim_matches('"').replace("\\n", "\n");
                     Self::String(Rc::new(string))
                 }
+                // type
+                else if let Some(typ) = Type::parse(&token) {
+                    Self::Type(typ)
+                }
                 // number
                 else if let Ok(num) = u32::from_str_radix(&token, 10) {
                     Self::Number(num)
@@ -44,6 +70,7 @@ impl Token {
     fn symbol(sym: char) -> Option<Self> {
         let sym = match sym {
             ';' => Token::Semicolon,
+            ':' => Token::Colon,
             '=' => Token::Equal,
             '{' => Token::Open,
             '}' => Token::Close,

@@ -18,17 +18,29 @@ fn generate_code<E: Endian>(
     instruction: &Instruction,
 ) -> Program<E> {
     match instruction {
-        Instruction::Assign { id: _, value: _ } => program,
-        Instruction::Exit { num } => program.exit(*num),
-        Instruction::Print { id } => {
-            let (addr, size) = string_info[id];
-            program.write(addr, size)
-        }
+        Instruction::Assign {
+            id: _,
+            value: _,
+            typ: _,
+        } => program,
+        Instruction::Exit(expr) => match &**expr {
+            Expression::Number(num) => program.exit(*num),
+            Expression::String(_) => panic!("can't exit with a string"),
+            Expression::Ident(_) => todo!(),
+        },
+        Instruction::Print(expr) => match &**expr {
+            Expression::Number(_) => panic!("can't print a number"),
+            Expression::String(_) => todo!(),
+            Expression::Ident(id) => {
+                let (addr, size) = string_info[id];
+                program.write(addr, size - 1)
+            }
+        },
         Instruction::Binary { lhs, rhs } => {
             let p = generate_code(program, string_info, lhs);
             generate_code(p, string_info, rhs)
         }
-        Instruction::Loop { block } => {
+        Instruction::Loop(block) => {
             let start = program.code.len() as i32;
             let p = if let Some(block) = block {
                 generate_code(program, string_info, block)
@@ -46,16 +58,19 @@ fn find_global_variables(
     instruction: &Instruction,
 ) {
     match instruction {
-        Instruction::Assign { id, value } => {
-            global_strings.insert(id.clone(), value.clone());
-        }
+        Instruction::Assign { id, value, typ: _ } => match &**value {
+            Expression::String(string) => {
+                global_strings.insert(id.clone(), string.clone());
+            }
+            _ => {}
+        },
         Instruction::Binary { lhs, rhs } => {
             find_global_variables(global_strings, lhs);
             find_global_variables(global_strings, rhs);
         }
-        Instruction::Exit { num: _ } => {}
-        Instruction::Print { id: _ } => {}
-        Instruction::Loop { block } => {
+        Instruction::Exit(_) => {}
+        Instruction::Print(_) => {}
+        Instruction::Loop(block) => {
             if let Some(block) = block {
                 find_global_variables(global_strings, block);
             }
@@ -86,7 +101,14 @@ fn program<E: Endian>(e: E, entry: u32, instruction: &Instruction) -> (Program<E
 
 fn run<E: Endian>(e: E) {
     let code = std::fs::read_to_string("main.kx").unwrap();
-    let instruction = parse(&code).unwrap();
+
+    let instruction = match parse(&code) {
+        Ok(instructions) => instructions,
+        Err(e) => {
+            panic!("{e}");
+        }
+    };
+    // let instruction = parse(&code).unwrap();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
     let phsize = std::mem::size_of::<ProgramHeader32<E>>() as u32;

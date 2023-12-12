@@ -1,9 +1,10 @@
 var hello = "Hello world!\n";
 var bye = "Goodbye world!\n\n";
 
+
 loop {
     print hello;
     print bye;
 }
 
-exit 0;
+exit 69;
