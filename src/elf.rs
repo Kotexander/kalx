@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -52,6 +53,9 @@ impl<E: Endian> U16<E> {
     pub fn new(e: E, n: u16) -> Self {
         Self(e.u16_bytes(n), PhantomData)
     }
+    pub fn zero() -> Self {
+        Self([0, 0], PhantomData)
+    }
     // pub fn bytes(self) -> [u8; 2] {
     //     self.0
     // }
@@ -62,6 +66,9 @@ pub struct U32<E: Endian>([u8; 4], PhantomData<E>);
 impl<E: Endian> U32<E> {
     pub fn new(e: E, n: u32) -> Self {
         Self(e.u32_bytes(n), PhantomData)
+    }
+    pub fn zero() -> Self {
+        Self([0, 0, 0, 0], PhantomData)
     }
     // pub fn bytes(self) -> [u8; 4] {
     // self.0
@@ -154,12 +161,12 @@ unsafe impl<E: Endian> Pod for ELFHeader32<E> {}
 pub struct ProgramHeader32<E: Endian> {
     /// segment type
     /// * 0 null (unused)
-    /// * 1 for loadable segment
-    /// * 2 for dynamic linking information
-    /// * 3 for interpreter information
-    /// * 4 for auxiliary information
-    /// * 6 for program header table
-    /// * 7 for thread-local storage template
+    /// * 1 loadable segment
+    /// * 2 dynamic linking information
+    /// * 3 interpreter information
+    /// * 4 auxiliary information
+    /// * 6 program header table
+    /// * 7 thread-local storage template
     pub typ: U32<E>,
     /// where the file image is from in the file
     pub offset: U32<E>,
@@ -171,9 +178,9 @@ pub struct ProgramHeader32<E: Endian> {
     pub filesz: U32<E>,
     /// memomry size (in bytes)
     pub memsz: U32<E>,
-    /// * 1 for executable
-    /// * 2 for writeable
-    /// * 4 for readable
+    /// * 1 executable
+    /// * 2 writeable
+    /// * 4 readable
     pub flags: U32<E>,
     /// set 0 or 1 for no alignment. Otherwise, must be a power of 2.
     pub align: U32<E>,
@@ -183,14 +190,165 @@ unsafe impl<E: Endian> Pod for ProgramHeader32<E> {}
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct SectionHeader32<E: Endian> {
+    /// offset to a string in the .shstrtab section
     pub name: U32<E>,
+    /// section
+    /// * 0x00 null
+    /// * 0x01 program data
+    /// * 0x02 symbol table
+    /// * 0x03 string table
+    /// * 0x04 relocation entries with addends
+    /// * 0x05 symbol hash table
+    /// * 0x06 dynamic linking information
+    /// * 0x07 notes
+    /// * 0x08 program space with no data (bss)
+    /// * 0x09 relocation entries, no addends
+    /// * 0x0A SHT_SHLIB (reserved)
+    /// * 0x0B dynamic linker symbol table
+    /// * 0x0E array of constructors
+    /// * 0x0F array of deconstructors
+    /// * 0x10 array of pre-constructors
+    /// * 0x11 section group
+    /// * 0x12 extended section indices
+    /// * 0x13 number of defined types
     pub typ: U32<E>,
+    /// * 0b00000001 writeable
+    /// * 0b00000010 occupies memory during execution (ALLOC)
+    /// * 0b00000100 might be merged
+    /// * 0b00001000 contains null terminated strings
+    /// * 0b00010000 contains SHT index
+    /// * 0b00100000 preserve order after combining
+    /// * 0b01000000 non standard OS specfig handling required
+    /// * 0b10000000 sectino hold thread-local data
     pub flags: U32<E>,
+    /// virtual address of section in memory (only if loaded)
     pub addr: U32<E>,
+    /// section offset in file image
     pub offset: U32<E>,
+    /// size in bytes
     pub size: U32<E>,
+    /// depends on type
     pub link: U32<E>,
+    /// depends on type
     pub info: U32<E>,
+    /// required alignment
     pub addralign: U32<E>,
+    /// size in bytes of each entry for sections
+    /// that have fixed-size entries
+    ///
+    /// otherwise this is zero
     pub entsize: U32<E>,
 }
+impl<E: Endian> SectionHeader32<E> {
+    pub fn null() -> Self {
+        Self {
+            name: U32::zero(),
+            typ: U32::zero(),
+            flags: U32::zero(),
+            addr: U32::zero(),
+            offset: U32::zero(),
+            size: U32::zero(),
+            link: U32::zero(),
+            info: U32::zero(),
+            addralign: U32::zero(),
+            entsize: U32::zero(),
+        }
+    }
+}
+unsafe impl<E: Endian> Pod for SectionHeader32<E> {}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SymbolEntry<E: Endian> {
+    /// offset to a string defined by this entie's section header
+    pub name: U32<E>,
+    ///
+    pub value: U32<E>,
+    ///
+    pub size: U32<E>,
+    /// use `bind()` `typ()` or `info()`
+    pub info: u8,
+    /// 0 unused
+    pub other: u8,
+    pub shndx: U16<E>,
+}
+impl<E: Endian> SymbolEntry<E> {
+    /// 0 local - not visable outside of object file
+    /// 1 global - visable to all object file being combined
+    /// 2 weak - resemble global but have less precedence
+    pub const fn bind(i: u8) -> u8 {
+        i >> 4
+    }
+    /// 0 no type
+    /// 1 object (var, array)
+    /// 2 function
+    /// 3 section has an associated symbol. For relocation. Has local binding.
+    /// 4 file
+    /// 5 common
+    pub const fn typ(i: u8) -> u8 {
+        i & 0xF
+    }
+    /// refer to `Self::bind()` and `Self::typ()`
+    pub const fn info(b: u8, t: u8) -> u8 {
+        (b << 4) + (t & 0xF)
+    }
+    pub fn index_zero() -> Self {
+        Self {
+            name: U32::zero(),
+            value: U32::zero(),
+            size: U32::zero(),
+            info: 0,
+            other: 0,
+            shndx: U16::zero(),
+        }
+    }
+}
+unsafe impl<E: Endian> Pod for SymbolEntry<E> {}
+
+pub struct StringTable {
+    strings: Vec<u8>,
+}
+impl StringTable {
+    pub fn new() -> Self {
+        Self { strings: vec![0x0] }
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.strings
+    }
+    pub fn add(&mut self, string: &CStr) -> u32 {
+        let i = self.size();
+        self.strings.extend_from_slice(string.to_bytes_with_nul());
+        i
+    }
+    pub fn size(&self) -> u32 {
+        self.strings.len() as u32
+    }
+}
+
+// pub struct SectionHeaderTable<E: Endian> {
+//     headers: Vec<SectionHeader32<E>>,
+// }
+// impl<E: Endian> SectionHeaderTable<E> {
+//     pub fn new() -> Self {
+//         Self { headers: vec![] }
+//     }
+//     pub fn add(&mut self, header: SectionHeader32<E>) {
+//         self.headers.push(header);
+//     }
+//     pub fn bytes(self) -> Vec<u8> {
+//         self.headers
+//             .into_iter()
+//             .map(|h| h.bytes().to_vec())
+//             .flatten()
+//             .collect()
+//     }
+// }
+
+// struct ELFBuilder<E: Endian> {
+//     header: ELFHeader32<E>,
+// }
+// impl<E: Endian> ELFBuilder<E> {
+//     fn new(header: ELFHeader32<E>) -> Self {
+//         Self { header }
+//     }
+// }

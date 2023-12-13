@@ -14,7 +14,7 @@ use parser::*;
 
 fn generate_code<E: Endian>(
     program: Program<E>,
-    string_info: &HashMap<Rc<String>, (u32, u32)>,
+    // string_info: &HashMap<Rc<String>, (u32, u32)>,
     instruction: &Instruction,
 ) -> Program<E> {
     match instruction {
@@ -32,18 +32,22 @@ fn generate_code<E: Endian>(
             Expression::Number(_) => panic!("can't print a number"),
             Expression::String(_) => todo!(),
             Expression::Ident(id) => {
-                let (addr, size) = string_info[id];
-                program.write(addr, size - 1)
+                // let (addr, size) = string_info[id];
+                // program.write(addr, size - 1)
+                unimplemented!();
             }
         },
         Instruction::Binary { lhs, rhs } => {
-            let p = generate_code(program, string_info, lhs);
-            generate_code(p, string_info, rhs)
+            // let p = generate_code(program, string_info, lhs);
+            // generate_code(p, string_info, rhs)
+            let p = generate_code(program, lhs);
+            generate_code(p, rhs)
         }
         Instruction::Loop(block) => {
             let start = program.code.len() as i32;
             let p = if let Some(block) = block {
-                generate_code(program, string_info, block)
+                // generate_code(program, string_info, block)
+                generate_code(program, block)
             } else {
                 program
             };
@@ -78,26 +82,26 @@ fn find_global_variables(
     }
 }
 
-fn program<E: Endian>(e: E, entry: u32, instruction: &Instruction) -> (Program<E>, Program<E>) {
-    // find all global strings
-    let mut global_strings = HashMap::new();
-    find_global_variables(&mut global_strings, instruction);
+// fn program<E: Endian>(e: E, entry: u32, instruction: &Instruction) -> (Program<E>, Program<E>) {
+// find all global strings
+// let mut global_strings = HashMap::new();
+// find_global_variables(&mut global_strings, instruction);
 
-    // add global strings to .data
-    let mut string_info = HashMap::new();
-    let mut data = Program::new(e);
-    for (id, string) in global_strings {
-        let cstring = CString::new(string.as_str()).unwrap();
-        let addr = data.code.len() as u32 + entry;
+// add global strings to .data
+// let mut string_info = HashMap::new();
+// let mut data = Program::new(e);
+// for (id, string) in global_strings {
+//     let cstring = CString::new(string.as_str()).unwrap();
+//     let addr = data.code.len() as u32 + entry;
 
-        string_info.insert(id, (addr, cstring.as_bytes_with_nul().len() as u32));
-        data = data.string(&cstring);
-    }
+//     string_info.insert(id, (addr, cstring.as_bytes_with_nul().len() as u32));
+//     data = data.string(&cstring);
+// }
 
-    let text = generate_code(Program::new(e), &string_info, instruction);
+// let text = generate_code(Program::new(e), &string_info, instruction);
 
-    (text, data)
-}
+// (text, data)
+// }
 
 fn run<E: Endian>(e: E) {
     let code = std::fs::read_to_string("main.kx").unwrap();
@@ -108,65 +112,149 @@ fn run<E: Endian>(e: E) {
             panic!("{e}");
         }
     };
-    // let instruction = parse(&code).unwrap();
+    let instruction = parse(&code).unwrap();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
-    let phsize = std::mem::size_of::<ProgramHeader32<E>>() as u32;
+    // let phsize = std::mem::size_of::<ProgramHeader32<E>>() as u32;
     let shsize = std::mem::size_of::<SectionHeader32<E>>() as u32;
-    let align = 0x1000;
-    let offset = (ehsize + phsize) % align;
-    let entry = 0x08048000 + offset;
+    let symentrysize = std::mem::size_of::<SymbolEntry<E>>() as u32;
 
-    let (text, data) = program(e, entry, &instruction);
+    let num_sh = 5;
+    let offset = ehsize + shsize * num_sh;
+    // let align = 0x1000;
+    // let offset = (ehsize + phsize) % align;
+    // let entry = 0x08048000;
 
-    // let data_size = data.code.len() as u32;
-    // let data_ph = ProgramHeader32 {
-    //     typ: U32::new(e, 1),
-    //     offset: U32::new(e, offset),
-    //     vaddr: U32::new(e, entry),
-    //     paddr: U32::new(e, 0),
-    //     filesz: U32::new(e, data_size),
-    //     memsz: U32::new(e, data_size),
-    //     flags: U32::new(e, 4),
-    //     align: U32::new(e, align),
-    // };
-    let data_size = data.code.len() as u32;
-    let text_size = text.code.len() as u32;
-    let size = data_size + text_size;
-    let text_ph = ProgramHeader32 {
+    // let (text, data) = program(e, entry, &instruction);
+
+    let null_sh = SectionHeader32::<E>::null();
+
+    let program = Program::new(e);
+    let text_program = generate_code(program, &instruction);
+
+    let mut shstrings = StringTable::new();
+    let text_i = shstrings.add(&CString::new(".text").unwrap()) as u32;
+    let strtab_i = shstrings.add(&CString::new(".strtab").unwrap()) as u32;
+    let shsymtab_i = shstrings.add(&CString::new(".symtab").unwrap()) as u32;
+    let shstrtab_i = shstrings.add(&CString::new(".shstrtab").unwrap()) as u32;
+
+    let text_size = text_program.code.len() as u32;
+    let text = SectionHeader32 {
+        name: U32::new(e, text_i),
         typ: U32::new(e, 1),
-        offset: U32::new(e, offset), // right after ELF header
-        vaddr: U32::new(e, entry),
-        paddr: U32::new(e, 0), // not used
-        filesz: U32::new(e, size),
-        memsz: U32::new(e, size),
-        flags: U32::new(e, 1 | 4), // EXEC and READ
-        align: U32::new(e, align),
+        flags: U32::new(e, 6),
+        addr: U32::zero(),
+        offset: U32::new(e, offset),
+        size: U32::new(e, text_size),
+        link: U32::zero(),
+        info: U32::zero(),
+        addralign: U32::new(e, 0),
+        entsize: U32::zero(),
+    };
+
+    let mut strings = StringTable::new();
+    let symfile_i = strings.add(&CString::new("main.kx").unwrap());
+    let symtext_i = strings.add(&CString::new(".text").unwrap());
+    let sym_start_i = strings.add(&CString::new("_start").unwrap());
+    let strtab = SectionHeader32 {
+        name: U32::new(e, strtab_i),
+        typ: U32::new(e, 3),
+        flags: U32::zero(),
+        addr: U32::zero(),
+        offset: U32::new(e, offset + text_size),
+        size: U32::new(e, strings.size()),
+        link: U32::zero(),
+        info: U32::zero(),
+        addralign: U32::new(e, 0),
+        entsize: U32::zero(),
+    };
+
+    let sym_entry = SymbolEntry::<E>::index_zero();
+    let sym_file = SymbolEntry {
+        name: U32::new(e, symfile_i),
+        value: U32::zero(),
+        size: U32::zero(),
+        info: SymbolEntry::<E>::info(0, 4),
+        other: 0,
+        shndx: U16::new(e, 0xfff1),
+    };
+    let sym_text = SymbolEntry {
+        name: U32::new(e, symtext_i),
+        value: U32::zero(),
+        size: U32::zero(),
+        info: SymbolEntry::<E>::info(0, 3),
+        other: 0,
+        shndx: U16::new(e, 1),
+    };
+    let sym_start = SymbolEntry {
+        name: U32::new(e, sym_start_i),
+        value: U32::zero(),
+        size: U32::zero(),
+        info: SymbolEntry::<E>::info(1, 0),
+        other: 0,
+        shndx: U16::new(e, 1),
+    };
+    let sym_size = symentrysize * 4;
+    let symtab = SectionHeader32 {
+        name: U32::new(e, shsymtab_i),
+        typ: U32::new(e, 0x02),
+        flags: U32::zero(),
+        addr: U32::zero(),
+        offset: U32::new(e, offset + text_size + strings.size()),
+        size: U32::new(e, sym_size),
+        link: U32::new(e, 2),
+        info: U32::new(e, 3),
+        addralign: U32::new(e, 0),
+        entsize: U32::new(e, symentrysize),
+    };
+    let shstrtab = SectionHeader32 {
+        name: U32::new(e, shstrtab_i),
+        typ: U32::new(e, 3),
+        flags: U32::zero(),
+        addr: U32::zero(),
+        offset: U32::new(e, offset + text_size + strings.size() + sym_size),
+        size: U32::new(e, shstrings.size()),
+        link: U32::zero(),
+        info: U32::zero(),
+        addralign: U32::new(e, 0x0),
+        entsize: U32::zero(),
     };
 
     let elf = ELFHeader32 {
         ident: EFIIdent::new_32bit(e.endianess()),
-        typ: U16::new(e, 2),                   // EXEC
-        machine: U16::new(e, 3),               // i686 x86
-        version: U32::new(e, 1),               // always 1
-        entry: U32::new(e, entry + data_size), // something safe
-        phoff: U32::new(e, ehsize),            // right after header
-        shoff: U32::new(e, 0),                 // none
-        flags: U32::new(e, 0),                 // none
+        typ: U16::new(e, 1),     // REL
+        machine: U16::new(e, 3), // i686 x86
+        version: U32::new(e, 1), // always 1
+        entry: U32::zero(),      // none
+        phoff: U32::zero(),      // none
+        shoff: U32::new(e, ehsize),
+        flags: U32::zero(),                    // none
         ehsize: U16::new(e, ehsize as u16),    // own size
-        phentsize: U16::new(e, phsize as u16), // ph size
-        phnum: U16::new(e, 1),                 // 1
+        phentsize: U16::zero(),                // not used
+        phnum: U16::zero(),                    // none
         shentsize: U16::new(e, shsize as u16), // sh size
-        shnum: U16::new(e, 0),                 // none
-        shstrndx: U16::new(e, 0),              // none
+        shnum: U16::new(e, num_sh as u16),
+        shstrndx: U16::new(e, 4),
     };
 
     write(
         &elf.bytes()
             .iter()
-            .chain(text_ph.bytes().iter())
-            .chain(data.code.iter())
-            .chain(text.code.iter())
+            // --
+            .chain(null_sh.bytes().iter())
+            .chain(text.bytes().iter())
+            .chain(strtab.bytes().iter())
+            .chain(symtab.bytes().iter())
+            .chain(shstrtab.bytes().iter())
+            // --
+            .chain(text_program.code.iter())
+            .chain(strings.bytes().iter())
+            .chain(sym_entry.bytes().iter())
+            .chain(sym_file.bytes().iter())
+            .chain(sym_text.bytes().iter())
+            .chain(sym_start.bytes().iter())
+            .chain(shstrings.bytes().iter())
+            // --
             .copied()
             .collect::<Vec<u8>>(),
     )
@@ -176,7 +264,7 @@ fn write(bytes: &[u8]) {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    let mut file = std::fs::File::create("output/out").unwrap();
+    let mut file = std::fs::File::create("output/main.o").unwrap();
     let mut perms = file.metadata().unwrap().permissions();
     perms.set_mode(0o775);
     file.set_permissions(perms).unwrap();

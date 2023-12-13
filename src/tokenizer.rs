@@ -91,12 +91,7 @@ impl<'a> Tokenizer<'a> {
         let code_chars = code.char_indices().peekable();
         Self { code, code_chars }
     }
-}
-impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // strip leading whitespace
+    pub fn strip_leading_whitespace(&mut self) {
         while let Some((_, c)) = self.code_chars.peek() {
             if c.is_whitespace() {
                 self.code_chars.next();
@@ -104,8 +99,38 @@ impl<'a> Iterator for Tokenizer<'a> {
                 break;
             }
         }
+    }
+}
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = Token;
 
-        let (start, c) = self.code_chars.next()?;
+    fn next(&mut self) -> Option<Self::Item> {
+        let (start, c) = loop {
+            self.strip_leading_whitespace();
+
+            let (start, c) = self.code_chars.next()?;
+
+            // check if comment
+            let mut is_comment = false;
+            if c == '/' {
+                if let Some((_, c2)) = self.code_chars.peek() {
+                    if *c2 == '/' {
+                        is_comment = true;
+                    }
+                }
+            }
+            if is_comment {
+                // skip to the next line and try again
+                while let Some((_, c)) = self.code_chars.next() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            } else {
+                // exit if not comment
+                break (start, c);
+            };
+        };
 
         let sym = Token::symbol(c);
         if sym.is_some() {

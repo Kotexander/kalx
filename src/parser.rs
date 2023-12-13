@@ -187,11 +187,9 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
 
     if nodes.nodes.len() != 1 {
         Err(format!("node list is not 1: {nodes:#?}"))
+    } else if let Node::AST(AST::Instruction(instructions)) = nodes.nodes.pop().unwrap() {
+        Ok(instructions)
     } else {
-        if let Node::AST(AST::Instruction(instructions)) = nodes.nodes.pop().unwrap() {
-            Ok(instructions)
-        } else {
-            Err(format!("last node is not an instructions: {nodes:#?}"))
-        }
+        Err(format!("last node is not an instructions: {nodes:#?}"))
     }
 }
