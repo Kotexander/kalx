@@ -1,21 +1,23 @@
-use std::ffi::CStr;
+#![allow(unused)]
+
+use std::{ffi::CStr, marker::PhantomData};
 
 use crate::elf::Endian;
 
 #[derive(Debug, Clone)]
 pub struct Program<E: Endian> {
     pub code: Vec<u8>,
-    e: E,
+    phantom: PhantomData<E>,
 }
 impl<E: Endian> Program<E> {
-    pub fn new(e: E) -> Self {
+    pub fn new() -> Self {
         Self {
             code: Vec::new(),
-            e,
+            phantom: PhantomData,
         }
     }
     pub fn imm(mut self, imm: u32) -> Self {
-        self.code.extend_from_slice(&self.e.u32_bytes(imm));
+        self.code.extend_from_slice(&E::u32_bytes(imm));
         self
     }
     pub fn string(mut self, string: &CStr) -> Self {

@@ -103,7 +103,7 @@ fn find_global_variables(
 // (text, data)
 // }
 
-fn run<E: Endian>(e: E) {
+fn run<E: Endian>() {
     let code = std::fs::read_to_string("main.kx").unwrap();
 
     let instruction = match parse(&code) {
@@ -112,7 +112,6 @@ fn run<E: Endian>(e: E) {
             panic!("{e}");
         }
     };
-    let instruction = parse(&code).unwrap();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
     // let phsize = std::mem::size_of::<ProgramHeader32<E>>() as u32;
@@ -129,7 +128,7 @@ fn run<E: Endian>(e: E) {
 
     let null_sh = SectionHeader32::<E>::null();
 
-    let program = Program::new(e);
+    let program = Program::<E>::new();
     let text_program = generate_code(program, &instruction);
 
     let mut shstrings = StringTable::new();
@@ -139,16 +138,16 @@ fn run<E: Endian>(e: E) {
     let shstrtab_i = shstrings.add(&CString::new(".shstrtab").unwrap()) as u32;
 
     let text_size = text_program.code.len() as u32;
-    let text = SectionHeader32 {
-        name: U32::new(e, text_i),
-        typ: U32::new(e, 1),
-        flags: U32::new(e, 6),
+    let text = SectionHeader32::<E> {
+        name: U32::new(text_i),
+        typ: U32::new(1),
+        flags: U32::new(6),
         addr: U32::zero(),
-        offset: U32::new(e, offset),
-        size: U32::new(e, text_size),
+        offset: U32::new(offset),
+        size: U32::new(text_size),
         link: U32::zero(),
         info: U32::zero(),
-        addralign: U32::new(e, 0),
+        addralign: U32::new(0),
         entsize: U32::zero(),
     };
 
@@ -156,85 +155,85 @@ fn run<E: Endian>(e: E) {
     let symfile_i = strings.add(&CString::new("main.kx").unwrap());
     let symtext_i = strings.add(&CString::new(".text").unwrap());
     let sym_start_i = strings.add(&CString::new("_start").unwrap());
-    let strtab = SectionHeader32 {
-        name: U32::new(e, strtab_i),
-        typ: U32::new(e, 3),
+    let strtab = SectionHeader32::<E> {
+        name: U32::new(strtab_i),
+        typ: U32::new(3),
         flags: U32::zero(),
         addr: U32::zero(),
-        offset: U32::new(e, offset + text_size),
-        size: U32::new(e, strings.size()),
+        offset: U32::new(offset + text_size),
+        size: U32::new(strings.size()),
         link: U32::zero(),
         info: U32::zero(),
-        addralign: U32::new(e, 0),
+        addralign: U32::new(0),
         entsize: U32::zero(),
     };
 
     let sym_entry = SymbolEntry::<E>::index_zero();
-    let sym_file = SymbolEntry {
-        name: U32::new(e, symfile_i),
+    let sym_file = SymbolEntry::<E> {
+        name: U32::new(symfile_i),
         value: U32::zero(),
         size: U32::zero(),
-        info: SymbolEntry::<E>::info(0, 4),
+        info: SymbolEntry::<E>::info(SEBind::Local, SEType::File),
         other: 0,
-        shndx: U16::new(e, 0xfff1),
+        shndx: U16::new(0xfff1),
     };
-    let sym_text = SymbolEntry {
-        name: U32::new(e, symtext_i),
+    let sym_text = SymbolEntry::<E> {
+        name: U32::new(symtext_i),
         value: U32::zero(),
         size: U32::zero(),
-        info: SymbolEntry::<E>::info(0, 3),
+        info: SymbolEntry::<E>::info(SEBind::Local, SEType::Section),
         other: 0,
-        shndx: U16::new(e, 1),
+        shndx: U16::new(1),
     };
-    let sym_start = SymbolEntry {
-        name: U32::new(e, sym_start_i),
+    let sym_start = SymbolEntry::<E> {
+        name: U32::new(sym_start_i),
         value: U32::zero(),
         size: U32::zero(),
-        info: SymbolEntry::<E>::info(1, 0),
+        info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
         other: 0,
-        shndx: U16::new(e, 1),
+        shndx: U16::new(1),
     };
     let sym_size = symentrysize * 4;
-    let symtab = SectionHeader32 {
-        name: U32::new(e, shsymtab_i),
-        typ: U32::new(e, 0x02),
+    let symtab = SectionHeader32::<E> {
+        name: U32::new(shsymtab_i),
+        typ: U32::new(0x02),
         flags: U32::zero(),
         addr: U32::zero(),
-        offset: U32::new(e, offset + text_size + strings.size()),
-        size: U32::new(e, sym_size),
-        link: U32::new(e, 2),
-        info: U32::new(e, 3),
-        addralign: U32::new(e, 0),
-        entsize: U32::new(e, symentrysize),
+        offset: U32::new(offset + text_size + strings.size()),
+        size: U32::new(sym_size),
+        link: U32::new(2),
+        info: U32::new(3),
+        addralign: U32::new(0),
+        entsize: U32::new(symentrysize),
     };
-    let shstrtab = SectionHeader32 {
-        name: U32::new(e, shstrtab_i),
-        typ: U32::new(e, 3),
+    let shstrtab = SectionHeader32::<E> {
+        name: U32::new(shstrtab_i),
+        typ: U32::new(3),
         flags: U32::zero(),
         addr: U32::zero(),
-        offset: U32::new(e, offset + text_size + strings.size() + sym_size),
-        size: U32::new(e, shstrings.size()),
+        offset: U32::new(offset + text_size + strings.size() + sym_size),
+        size: U32::new(shstrings.size()),
         link: U32::zero(),
         info: U32::zero(),
-        addralign: U32::new(e, 0x0),
+        addralign: U32::new(0x0),
         entsize: U32::zero(),
     };
 
-    let elf = ELFHeader32 {
-        ident: EFIIdent::new_32bit(e.endianess()),
-        typ: U16::new(e, 1),     // REL
-        machine: U16::new(e, 3), // i686 x86
-        version: U32::new(e, 1), // always 1
-        entry: U32::zero(),      // none
-        phoff: U32::zero(),      // none
-        shoff: U32::new(e, ehsize),
-        flags: U32::zero(),                    // none
-        ehsize: U16::new(e, ehsize as u16),    // own size
-        phentsize: U16::zero(),                // not used
-        phnum: U16::zero(),                    // none
-        shentsize: U16::new(e, shsize as u16), // sh size
-        shnum: U16::new(e, num_sh as u16),
-        shstrndx: U16::new(e, 4),
+    let elf = ELFHeader32::<E> {
+        ident: EFIIdent::new_32bit(E::endianess()),
+        typ: U16::new(1),     // REL
+        machine: U16::new(3), // i686 x86
+        version: U32::new(1), // always 1
+        entry: U32::zero(),   // none
+        phoff: U32::zero(),   // none
+        shoff: U32::new(ehsize),
+        flags: U32::zero(),                 // none
+        ehsize: U16::new(ehsize as u16),    // own size
+        phentsize: U16::zero(),             // not used
+        phnum: U16::zero(),                 // none
+        shentsize: U16::new(shsize as u16), // sh size
+        shnum: U16::new(num_sh as u16),
+        shstrndx: U16::new(4),
     };
 
     write(
@@ -273,7 +272,5 @@ fn write(bytes: &[u8]) {
 }
 
 fn main() {
-    let e = LittleEndian;
-
-    run(e);
+    run::<LittleEndian>();
 }
