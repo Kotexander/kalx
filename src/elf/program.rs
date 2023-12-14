@@ -1,6 +1,7 @@
 use super::*;
 
 #[repr(u32)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum PHType {
     Null = 0x0,
     Load = 0x1,
@@ -18,6 +19,7 @@ pub enum PHType {
     LowProc = 0x70000000,
     HighProc = 0x7FFFFFFF,
 }
+#[allow(clippy::from_over_into)]
 impl<E: Endian> Into<U32<E>> for PHType {
     fn into(self) -> U32<E> {
         U32::new(self as u32)
@@ -32,6 +34,7 @@ pub enum PHFlag {
     /// Readable
     R = 0b100,
 }
+#[allow(clippy::from_over_into)]
 impl<E: Endian> Into<U32<E>> for PHFlag {
     fn into(self) -> U32<E> {
         U32::new(self as u32)

@@ -121,7 +121,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             }
             if is_comment {
                 // skip to the next line and try again
-                while let Some((_, c)) = self.code_chars.next() {
+                for (_, c) in self.code_chars.by_ref() {
                     if c == '\n' {
                         break;
                     }

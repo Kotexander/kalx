@@ -66,6 +66,12 @@ impl<E: Endian> U16<E> {
     //     self.0
     // }
 }
+impl<E: Endian> From<u16> for U16<E> {
+    fn from(value: u16) -> Self {
+        Self::new(value)
+    }
+}
+
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 pub struct U32<E: Endian>([u8; 4], PhantomData<E>);
@@ -79,6 +85,11 @@ impl<E: Endian> U32<E> {
     // pub fn bytes(self) -> [u8; 4] {
     // self.0
     // }
+}
+impl<E: Endian> From<u32> for U32<E> {
+    fn from(value: u32) -> Self {
+        Self::new(value)
+    }
 }
 
 #[repr(u8)]
@@ -126,10 +137,10 @@ pub struct EFIIdent {
 }
 impl EFIIdent {
     pub const MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
-    pub fn new_32bit(endianess: Endianess) -> Self {
+    pub fn new_32bit<E: Endian>() -> Self {
         Self {
             class: EFIIdentClass::Bit32 as u8,
-            data: EFIIData::from(endianess) as u8,
+            data: EFIIData::from(E::endianess()) as u8,
             ..Default::default()
         }
     }
@@ -149,7 +160,7 @@ impl Default for EFIIdent {
 }
 
 #[repr(u16)]
-pub enum EFIHType {
+pub enum EHType {
     None = 0x00,
     Rel = 0x01,
     Exec = 0x02,
@@ -160,7 +171,8 @@ pub enum EFIHType {
     LowProc = 0xFF00,
     HighProc = 0xFFFF,
 }
-impl<E: Endian> Into<U16<E>> for EFIHType {
+#[allow(clippy::from_over_into)]
+impl<E: Endian> Into<U16<E>> for EHType {
     fn into(self) -> U16<E> {
         U16::new(self as u16)
     }
@@ -172,7 +184,7 @@ pub struct ELFHeader32<E: Endian> {
     pub ident: EFIIdent,
     /// Object file type
     ///
-    /// Equals to [`EFIIdentType`]
+    /// Equals to [`EHType`]
     pub typ: U16<E>,
     /// target architecture
     pub machine: U16<E>,
@@ -204,7 +216,7 @@ impl<E: Endian> Default for ELFHeader32<E> {
         use std::mem::size_of;
         Self {
             ident: Default::default(),
-            typ: EFIHType::None.into(),
+            typ: EHType::None.into(),
             machine: U16::zero(),
             version: U32::new(1),
             entry: U32::zero(),
@@ -221,3 +233,32 @@ impl<E: Endian> Default for ELFHeader32<E> {
     }
 }
 unsafe impl<E: Endian> Pod for ELFHeader32<E> {}
+
+pub struct ELFBuilder<E: Endian> {
+    pub header: ELFHeader32<E>,
+    pub sections: SectionHeaders<E>,
+}
+impl<E: Endian> ELFBuilder<E> {
+    pub fn new(header: ELFHeader32<E>) -> Self {
+        Self {
+            header,
+            sections: SectionHeaders::new(),
+        }
+    }
+    pub fn update(&mut self) {
+        self.sections
+            .update(std::mem::size_of::<ELFHeader32<E>>() as u32);
+        let num = self.sections.len();
+        let shstrndx = self.sections.shstrndx();
+        self.header.shnum = num.into();
+        self.header.shstrndx = shstrndx.into();
+    }
+    pub fn bytes(self) -> Vec<u8> {
+        self.header
+            .bytes()
+            .iter()
+            .chain(self.sections.bytes().iter())
+            .copied()
+            .collect()
+    }
+}

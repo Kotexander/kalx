@@ -27,6 +27,7 @@ pub enum Expression {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum AST {
     Instruction(Rc<Instruction>),
     Block(Block),
@@ -49,6 +50,7 @@ impl From<Rc<Expression>> for AST {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Node {
     Token(Token),
     AST(AST),

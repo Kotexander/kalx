@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use super::*;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 
 #[repr(u32)]
 pub enum SHType {
@@ -24,6 +24,7 @@ pub enum SHType {
     SymTabSHNDX = 0x12,
     Num = 0x13,
 }
+#[allow(clippy::from_over_into)]
 impl<E: Endian> Into<U32<E>> for SHType {
     fn into(self) -> U32<E> {
         U32::new(self as u32)
@@ -31,6 +32,7 @@ impl<E: Endian> Into<U32<E>> for SHType {
 }
 
 #[repr(u32)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SHFlag {
     Write = 0x1,
     Alloc = 0x2,
@@ -48,6 +50,14 @@ pub enum SHFlag {
     // Ordered = 0x4000000,
     // Exclude = 0x8000000,
 }
+impl std::ops::BitOr for SHFlag {
+    type Output = u32;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        self as u32 | rhs as u32
+    }
+}
+#[allow(clippy::from_over_into)]
 impl<E: Endian> Into<U32<E>> for SHFlag {
     fn into(self) -> U32<E> {
         U32::new(self as u32)
@@ -132,9 +142,7 @@ pub enum SEType {
 pub struct SymbolEntry<E: Endian> {
     /// offset to a string defined by this entie's section header
     pub name: U32<E>,
-    ///
     pub value: U32<E>,
-    ///
     pub size: U32<E>,
     /// use [`Self::info()`]
     pub info: u8,
@@ -146,7 +154,7 @@ impl<E: Endian> SymbolEntry<E> {
     pub const fn info(b: SEBind, t: SEType) -> u8 {
         ((b as u8) << 4) + ((t as u8) & 0xF)
     }
-    pub fn index_zero() -> Self {
+    pub fn zero() -> Self {
         Self::default()
     }
 }
@@ -164,17 +172,20 @@ impl<E: Endian> Default for SymbolEntry<E> {
 }
 unsafe impl<E: Endian> Pod for SymbolEntry<E> {}
 
-pub struct StringTable {
+pub struct ELFStrings {
     strings: Vec<u8>,
 }
-impl StringTable {
+impl ELFStrings {
     pub fn new() -> Self {
         Self { strings: vec![0x0] }
     }
-    pub fn bytes(&self) -> &[u8] {
-        &self.strings
+    pub fn bytes(self) -> Vec<u8> {
+        self.strings
     }
-    pub fn add(&mut self, string: &CStr) -> u32 {
+    pub fn add_str(&mut self, string: &str) -> Option<u32> {
+        Some(self.add_cstr(&CString::new(string).ok()?))
+    }
+    pub fn add_cstr(&mut self, string: &CStr) -> u32 {
         let i = self.size();
         self.strings.extend_from_slice(string.to_bytes_with_nul());
         i
@@ -184,30 +195,117 @@ impl StringTable {
     }
 }
 
-// pub struct SectionHeaderTable<E: Endian> {
-//     headers: Vec<SectionHeader32<E>>,
-// }
-// impl<E: Endian> SectionHeaderTable<E> {
-//     pub fn new() -> Self {
-//         Self { headers: vec![] }
-//     }
-//     pub fn add(&mut self, header: SectionHeader32<E>) {
-//         self.headers.push(header);
-//     }
-//     pub fn bytes(self) -> Vec<u8> {
-//         self.headers
-//             .into_iter()
-//             .map(|h| h.bytes().to_vec())
-//             .flatten()
-//             .collect()
-//     }
-// }
+pub struct SymbolTable<E: Endian> {
+    strtab: (SectionHeader32<E>, ELFStrings),
+    symbolsh: SectionHeader32<E>,
+    entries: Vec<SymbolEntry<E>>,
+}
+impl<E: Endian> SymbolTable<E> {
+    pub fn new() -> Self {
+        let strings = ELFStrings::new();
+        let tab = SectionHeader32 {
+            typ: SHType::StrTab.into(),
+            ..Default::default()
+        };
 
-// struct ELFBuilder<E: Endian> {
-//     header: ELFHeader32<E>,
-// }
-// impl<E: Endian> ELFBuilder<E> {
-//     fn new(header: ELFHeader32<E>) -> Self {
-//         Self { header }
-//     }
-// }
+        let symbolsh = SectionHeader32 {
+            typ: SHType::SymTab.into(),
+            entsize: U32::new(std::mem::size_of::<SymbolEntry<E>>() as u32),
+            ..Default::default()
+        };
+        let entries = vec![SymbolEntry::zero()];
+
+        Self {
+            symbolsh,
+            strtab: (tab, strings),
+            entries,
+        }
+    }
+    pub fn add(&mut self, name: &str, mut entry: SymbolEntry<E>) {
+        let i = self.strtab.1.add_str(name).unwrap();
+        entry.name = i.into();
+        self.entries.push(entry);
+    }
+    pub fn set_info(&mut self) {
+        let info = self.entries.len() as u32;
+        self.symbolsh.info = info.into();
+    }
+}
+
+pub struct SectionHeaders<E: Endian> {
+    sections: Vec<(SectionHeader32<E>, Vec<u8>)>,
+    shstrtab: (SectionHeader32<E>, ELFStrings),
+}
+impl<E: Endian> SectionHeaders<E> {
+    pub fn new() -> Self {
+        let mut strings = ELFStrings::new();
+        let i = strings.add_str(".shstrtab").unwrap();
+        let shstrtab = SectionHeader32 {
+            name: U32::new(i),
+            typ: SHType::StrTab.into(),
+            ..Default::default()
+        };
+
+        Self {
+            sections: vec![(SectionHeader32::<E>::null(), vec![])],
+            shstrtab: (shstrtab, strings),
+        }
+    }
+    pub fn add(&mut self, name: &str, mut header: SectionHeader32<E>, data: Vec<u8>) {
+        let i = self.shstrtab.1.add_str(name).unwrap();
+        header.name = i.into();
+        self.sections.push((header, data));
+    }
+    pub fn add_sym_table(&mut self, str_name: &str, sym_name: &str, mut symtab: SymbolTable<E>) {
+        let str_i = self.shstrtab.1.add_str(str_name).unwrap();
+        let sym_i = self.shstrtab.1.add_str(sym_name).unwrap();
+        symtab.strtab.0.name = str_i.into();
+        symtab.symbolsh.name = sym_i.into();
+
+        let i = self.sections.len() as u32;
+        self.sections
+            .push((symtab.strtab.0, symtab.strtab.1.bytes()));
+        symtab.symbolsh.link = i.into();
+
+        self.sections.push((
+            symtab.symbolsh,
+            symtab
+                .entries
+                .iter()
+                .flat_map(|e| e.bytes())
+                .copied()
+                .collect(),
+        ))
+    }
+    pub fn update(&mut self, initial_offset: u32) {
+        let mut offset = (std::mem::size_of::<SectionHeader32<E>>() * (self.sections.len() + 1))
+            as u32
+            + initial_offset;
+        for (section, data) in self.sections.iter_mut().skip(1) {
+            let size = data.len() as u32;
+            section.offset = offset.into();
+            section.size = size.into();
+            offset += size;
+        }
+
+        let size = self.shstrtab.1.size();
+        self.shstrtab.0.offset = offset.into();
+        self.shstrtab.0.size = size.into();
+    }
+    pub fn bytes(self) -> Vec<u8> {
+        self.sections
+            .iter()
+            .flat_map(|(h, _)| h.bytes())
+            .chain(self.shstrtab.0.bytes())
+            .chain(self.sections.iter().flat_map(|(_, d)| d))
+            .chain(self.shstrtab.1.bytes().iter())
+            .copied()
+            .collect()
+    }
+    pub fn len(&self) -> u16 {
+        self.sections.len() as u16 + 1
+    }
+    pub fn shstrndx(&self) -> u16 {
+        self.sections.len() as u16
+    }
+}
