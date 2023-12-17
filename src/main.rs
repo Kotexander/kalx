@@ -1,5 +1,7 @@
 mod elf;
 
+use std::{collections::HashMap, rc::Rc};
+
 use elf::*;
 
 mod program;
@@ -9,22 +11,93 @@ mod tokenizer;
 
 mod parser;
 use parser::*;
+use tokenizer::Type;
+
+#[derive(Debug, Clone, Copy)]
+enum Var {
+    Global(Type),
+    Local(i8, Type),
+}
+
+type VarTypes = HashMap<Rc<String>, Type>;
+type VarAddresses = HashMap<Rc<String>, Var>;
+
+fn analyse_expr(expr: &Expression, var: &VarTypes) -> Type {
+    match expr {
+        Expression::Number(_) => Type::U32,
+        Expression::String(_) => Type::String,
+        Expression::Ident(id) => var[id],
+    }
+}
+fn analyse_instruction(instruction: &Instruction, vars: &mut VarTypes) {
+    match instruction {
+        Instruction::Assign { id, value } => {
+            if vars.contains_key(id) {
+                panic!("duplicate declaration");
+            } else {
+                let typ = analyse_expr(value, vars);
+                vars.insert(id.clone(), typ);
+            }
+        }
+        Instruction::Exit(expr) => {
+            analyse_expr(expr, vars);
+        }
+        Instruction::Print(expr) => {
+            analyse_expr(expr, vars);
+        }
+        Instruction::Binary { lhs, rhs } => {
+            analyse_instruction(lhs, vars);
+            analyse_instruction(rhs, vars);
+        }
+        Instruction::Loop(block) => {
+            if let Some(block) = block {
+                analyse_instruction(block, vars);
+            }
+        }
+    }
+}
 
 fn generate_code<E: Endian>(
-    program: Program<E>,
-    // string_info: &HashMap<Rc<String>, (u32, u32)>,
+    program: &mut Program<E>,
     instruction: &Instruction,
-) -> Program<E> {
+    vars: &VarAddresses,
+) {
     match instruction {
-        Instruction::Assign {
-            id: _,
-            value: _,
-            typ: _,
-        } => program,
+        Instruction::Assign { id, value } => {
+            match vars[id] {
+                Var::Global(_typ) => match &**value {
+                    Expression::Number(_) => todo!(),
+                    Expression::String(_) => todo!(),
+                    Expression::Ident(_) => todo!(),
+                },
+                Var::Local(addr, _typ) => match &**value {
+                    Expression::Number(num) => {
+                        program.mov_rm8_imm(RM32::EBP, addr, *num);
+                    }
+                    Expression::String(_) => todo!(),
+                    Expression::Ident(id) => match vars[id] {
+                        Var::Global(_) => todo!(),
+                        Var::Local(addr2, _typ) => {
+                            program.mov_r_rm8(Reg32::EAX, RM32::EBP, addr2);
+                            program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr);
+                        }
+                    },
+                },
+            };
+        }
         Instruction::Exit(expr) => match &**expr {
-            Expression::Number(num) => program.exit(*num),
+            Expression::Number(num) => {
+                program.mov_ebx_imm(*num);
+                program.exit();
+            }
             Expression::String(_) => panic!("can't exit with a string"),
-            Expression::Ident(_) => todo!(),
+            Expression::Ident(id) => match vars[id] {
+                Var::Global(_) => todo!(),
+                Var::Local(addr, _typ) => {
+                    program.mov_r_rm8(Reg32::EBX, RM32::EBP, addr);
+                    program.exit();
+                }
+            },
         },
         Instruction::Print(expr) => match &**expr {
             Expression::Number(_) => panic!("can't print a number"),
@@ -36,72 +109,22 @@ fn generate_code<E: Endian>(
             }
         },
         Instruction::Binary { lhs, rhs } => {
-            // let p = generate_code(program, string_info, lhs);
-            // generate_code(p, string_info, rhs)
-            let p = generate_code(program, lhs);
-            generate_code(p, rhs)
+            generate_code(program, lhs, vars);
+            generate_code(program, rhs, vars);
         }
         Instruction::Loop(block) => {
-            let start = program.code.len() as i32;
-            let p = if let Some(block) = block {
-                // generate_code(program, string_info, block)
-                generate_code(program, block)
-            } else {
-                program
-            };
-            let end = (p.code.len() + 2) as i32;
-            let rel = (start - end) as i8;
-            p.jmp_rel(rel)
+            program.loop_fn(|program| {
+                if let Some(block) = block {
+                    generate_code(program, block, vars);
+                }
+            });
         }
     }
 }
-// fn find_global_variables(
-//     global_strings: &mut HashMap<Rc<String>, Rc<String>>,
-//     instruction: &Instruction,
-// ) {
-//     match instruction {
-//         Instruction::Assign { id, value, typ: _ } => match &**value {
-//             Expression::String(string) => {
-//                 global_strings.insert(id.clone(), string.clone());
-//             }
-//             _ => {}
-//         },
-//         Instruction::Binary { lhs, rhs } => {
-//             find_global_variables(global_strings, lhs);
-//             find_global_variables(global_strings, rhs);
-//         }
-//         Instruction::Exit(_) => {}
-//         Instruction::Print(_) => {}
-//         Instruction::Loop(block) => {
-//             if let Some(block) = block {
-//                 find_global_variables(global_strings, block);
-//             }
-//         }
-//     }
-// }
-
-// fn program<E: Endian>(e: E, entry: u32, instruction: &Instruction) -> (Program<E>, Program<E>) {
-// find all global strings
-// let mut global_strings = HashMap::new();
-// find_global_variables(&mut global_strings, instruction);
-
-// add global strings to .data
-// let mut string_info = HashMap::new();
-// let mut data = Program::new(e);
-// for (id, string) in global_strings {
-//     let cstring = CString::new(string.as_str()).unwrap();
-//     let addr = data.code.len() as u32 + entry;
-
-//     string_info.insert(id, (addr, cstring.as_bytes_with_nul().len() as u32));
-//     data = data.string(&cstring);
-// }
-
-// let text = generate_code(Program::new(e), &string_info, instruction);
-
-// (text, data)
-// }
 
 fn run<E: Endian>() {
+    let _ = std::fs::remove_file("output/main.o");
+    let _ = std::fs::remove_file("output/main");
     let code = std::fs::read_to_string("main.kx").unwrap();
 
     let instruction = match parse(&code) {
@@ -111,10 +134,31 @@ fn run<E: Endian>() {
         }
     };
 
+    let mut vars_declared = VarTypes::new();
+    analyse_instruction(&instruction, &mut vars_declared);
+
+    let mut text = Program::<E>::new();
+
+    // setup stack
+    let mut vars_addrs = VarAddresses::new();
+    let mut alloc = 0i8;
+    for (id, typ) in vars_declared {
+        let var = match typ {
+            Type::String => Var::Global(typ),
+            Type::I32 | Type::U32 => {
+                alloc -= 4;
+                Var::Local(alloc, typ)
+            }
+        };
+        vars_addrs.insert(id, var);
+    }
+    text.mov_edp_esp();
+    text.sub_esp_imm8(alloc.unsigned_abs());
+
+    generate_code(&mut text, &instruction, &vars_addrs);
+    text.mov_esp_edp();
+
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
-
-    let text = generate_code(Program::<E>::new(), &instruction);
-
     let elf_header = ELFHeader32::<E> {
         ident: EFIIdent::new_32bit::<E>(),
         typ: EHType::Rel.into(),
@@ -123,8 +167,7 @@ fn run<E: Endian>() {
         ..Default::default()
     };
     let mut builder = ELFBuilder::new(elf_header);
-
-    builder.sections.add(
+    builder.sh.add(
         ".text",
         SectionHeader32 {
             typ: SHType::ProgBits.into(),
@@ -160,10 +203,21 @@ fn run<E: Endian>() {
             ..Default::default()
         },
     );
-
+    let i = builder.sh.sections.len() as u32;
     builder
-        .sections
-        .add_sym_table(".strtab", ".symtab", sym_table);
+        .sh
+        .add(".strtab", sym_table.strtab.0, sym_table.strtab.1.bytes());
+    sym_table.symbolsh.link = i.into();
+    builder.sh.add(
+        ".symtab",
+        sym_table.symbolsh,
+        sym_table
+            .entries
+            .iter()
+            .flat_map(|e| e.bytes())
+            .copied()
+            .collect(),
+    );
 
     builder.update();
     write(&builder.bytes())

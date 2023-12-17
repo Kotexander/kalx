@@ -9,7 +9,6 @@ pub enum Instruction {
     Assign {
         id: Rc<String>,
         value: Rc<Expression>,
-        typ: Option<Type>,
     },
     Exit(Rc<Expression>),
     Print(Rc<Expression>),
@@ -139,7 +138,6 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                     let node: AST = Rc::new(Instruction::Assign {
                         id: id.clone(),
                         value: expr.clone(),
-                        typ: None,
                     })
                     .into();
                     nodes.reduce(5);

@@ -6,4 +6,13 @@
 //   print bye;
 // }
 
-exit 69;
+var x = 69;
+var y = 420;
+var a = 32;
+var b = 64;
+var c = b;
+
+// var x = 11;
+// x = x+1;
+
+exit c;

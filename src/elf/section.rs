@@ -196,9 +196,9 @@ impl ELFStrings {
 }
 
 pub struct SymbolTable<E: Endian> {
-    strtab: (SectionHeader32<E>, ELFStrings),
-    symbolsh: SectionHeader32<E>,
-    entries: Vec<SymbolEntry<E>>,
+    pub strtab: (SectionHeader32<E>, ELFStrings),
+    pub symbolsh: SectionHeader32<E>,
+    pub entries: Vec<SymbolEntry<E>>,
 }
 impl<E: Endian> SymbolTable<E> {
     pub fn new() -> Self {
@@ -233,8 +233,8 @@ impl<E: Endian> SymbolTable<E> {
 }
 
 pub struct SectionHeaders<E: Endian> {
-    sections: Vec<(SectionHeader32<E>, Vec<u8>)>,
-    shstrtab: (SectionHeader32<E>, ELFStrings),
+    pub sections: Vec<(SectionHeader32<E>, Vec<u8>)>,
+    pub shstrtab: (SectionHeader32<E>, ELFStrings),
 }
 impl<E: Endian> SectionHeaders<E> {
     pub fn new() -> Self {
@@ -255,27 +255,6 @@ impl<E: Endian> SectionHeaders<E> {
         let i = self.shstrtab.1.add_str(name).unwrap();
         header.name = i.into();
         self.sections.push((header, data));
-    }
-    pub fn add_sym_table(&mut self, str_name: &str, sym_name: &str, mut symtab: SymbolTable<E>) {
-        let str_i = self.shstrtab.1.add_str(str_name).unwrap();
-        let sym_i = self.shstrtab.1.add_str(sym_name).unwrap();
-        symtab.strtab.0.name = str_i.into();
-        symtab.symbolsh.name = sym_i.into();
-
-        let i = self.sections.len() as u32;
-        self.sections
-            .push((symtab.strtab.0, symtab.strtab.1.bytes()));
-        symtab.symbolsh.link = i.into();
-
-        self.sections.push((
-            symtab.symbolsh,
-            symtab
-                .entries
-                .iter()
-                .flat_map(|e| e.bytes())
-                .copied()
-                .collect(),
-        ))
     }
     pub fn update(&mut self, initial_offset: u32) {
         let mut offset = (std::mem::size_of::<SectionHeader32<E>>() * (self.sections.len() + 1))

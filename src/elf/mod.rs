@@ -235,29 +235,28 @@ impl<E: Endian> Default for ELFHeader32<E> {
 unsafe impl<E: Endian> Pod for ELFHeader32<E> {}
 
 pub struct ELFBuilder<E: Endian> {
-    pub header: ELFHeader32<E>,
-    pub sections: SectionHeaders<E>,
+    pub eh: ELFHeader32<E>,
+    pub sh: SectionHeaders<E>,
 }
 impl<E: Endian> ELFBuilder<E> {
     pub fn new(header: ELFHeader32<E>) -> Self {
         Self {
-            header,
-            sections: SectionHeaders::new(),
+            eh: header,
+            sh: SectionHeaders::new(),
         }
     }
     pub fn update(&mut self) {
-        self.sections
-            .update(std::mem::size_of::<ELFHeader32<E>>() as u32);
-        let num = self.sections.len();
-        let shstrndx = self.sections.shstrndx();
-        self.header.shnum = num.into();
-        self.header.shstrndx = shstrndx.into();
+        self.sh.update(std::mem::size_of::<ELFHeader32<E>>() as u32);
+        let num = self.sh.len();
+        let shstrndx = self.sh.shstrndx();
+        self.eh.shnum = num.into();
+        self.eh.shstrndx = shstrndx.into();
     }
     pub fn bytes(self) -> Vec<u8> {
-        self.header
+        self.eh
             .bytes()
             .iter()
-            .chain(self.sections.bytes().iter())
+            .chain(self.sh.bytes().iter())
             .copied()
             .collect()
     }
