@@ -22,22 +22,34 @@ enum Var {
 type VarTypes = HashMap<Rc<String>, Type>;
 type VarAddresses = HashMap<Rc<String>, Var>;
 
-fn analyse_expr(expr: &Expression, var: &VarTypes) -> Type {
+fn analyse_expr(expr: &Expression, vars: &VarTypes) -> Type {
     match expr {
         Expression::Number(_) => Type::U32,
         Expression::String(_) => Type::String,
-        Expression::Ident(id) => var[id],
+        Expression::Ident(id) => vars[id],
+        Expression::Operation { lhs, op: _, rhs } => {
+            let lhs = analyse_expr(lhs, vars);
+            let rhs = analyse_expr(rhs, vars);
+            assert_eq!(lhs, rhs);
+            lhs
+        }
     }
 }
 fn analyse_instruction(instruction: &Instruction, vars: &mut VarTypes) {
     match instruction {
-        Instruction::Assign { id, value } => {
+        Instruction::Declare { id, value } => {
             if vars.contains_key(id) {
                 panic!("duplicate declaration");
             } else {
                 let typ = analyse_expr(value, vars);
                 vars.insert(id.clone(), typ);
             }
+        }
+        Instruction::Assign { id, value } => {
+            if !vars.contains_key(id) {
+                panic!("assignment before declaration");
+            }
+            analyse_expr(value, vars);
         }
         Instruction::Exit(expr) => {
             analyse_expr(expr, vars);
@@ -57,65 +69,110 @@ fn analyse_instruction(instruction: &Instruction, vars: &mut VarTypes) {
     }
 }
 
-fn generate_code<E: Endian>(
+#[derive(Debug, Clone, Copy)]
+enum Register {
+    EAX,
+    EBX,
+}
+#[derive(Debug, Clone, Copy)]
+enum Intent {
+    Load,
+    Add,
+}
+
+fn generate_expr<E: Endian>(
+    program: &mut Program<E>,
+    intent: Intent,
+    register: Register,
+    expr: &Expression,
+    vars: &VarAddresses,
+) {
+    match intent {
+        Intent::Load => match expr {
+            Expression::Number(num) => match register {
+                Register::EAX => {
+                    program.mov_eax_imm(*num);
+                }
+                Register::EBX => {
+                    program.mov_ebx_imm(*num);
+                }
+            },
+            Expression::String(_) => todo!(),
+            Expression::Ident(id) => match vars[id] {
+                Var::Global(_) => todo!(),
+                Var::Local(addr, _typ) => match register {
+                    Register::EAX => {
+                        program.mov_r_rm8(Reg32::EAX, RM32::EBP, addr);
+                    }
+                    Register::EBX => {
+                        program.mov_r_rm8(Reg32::EBX, RM32::EBP, addr);
+                    }
+                },
+            },
+            Expression::Operation { lhs, op: _, rhs } => {
+                generate_expr(program, Intent::Load, register, lhs, vars);
+                generate_expr(program, Intent::Add, register, rhs, vars);
+            }
+        },
+        Intent::Add => match expr {
+            Expression::Number(num) => match register {
+                Register::EAX => {
+                    program.add_eax_imm(*num);
+                }
+                Register::EBX => {
+                    program.add_rm_imm(RM32::EBX, *num);
+                }
+            },
+            Expression::String(_) => todo!(),
+            Expression::Ident(id) => match vars[id] {
+                Var::Global(_) => todo!(),
+                Var::Local(addr, _typ) => match register {
+                    Register::EAX => {
+                        program.add_r_rm8(Reg32::EAX, RM32::EBP, addr);
+                    }
+                    Register::EBX => {
+                        program.add_r_rm8(Reg32::EBX, RM32::EBP, addr);
+                    }
+                },
+            },
+            Expression::Operation {
+                lhs: _,
+                op: _,
+                rhs: _,
+            } => todo!(),
+        },
+    }
+}
+
+fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
     vars: &VarAddresses,
 ) {
     match instruction {
-        Instruction::Assign { id, value } => {
-            match vars[id] {
-                Var::Global(_typ) => match &**value {
-                    Expression::Number(_) => todo!(),
-                    Expression::String(_) => todo!(),
-                    Expression::Ident(_) => todo!(),
-                },
-                Var::Local(addr, _typ) => match &**value {
-                    Expression::Number(num) => {
-                        program.mov_rm8_imm(RM32::EBP, addr, *num);
-                    }
-                    Expression::String(_) => todo!(),
-                    Expression::Ident(id) => match vars[id] {
-                        Var::Global(_) => todo!(),
-                        Var::Local(addr2, _typ) => {
-                            program.mov_r_rm8(Reg32::EAX, RM32::EBP, addr2);
-                            program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr);
-                        }
-                    },
-                },
-            };
+        Instruction::Declare { id, value } | Instruction::Assign { id, value } => match vars[id] {
+            Var::Global(_) => todo!(),
+            Var::Local(addr, _typ) => {
+                generate_expr(program, Intent::Load, Register::EAX, value, vars);
+                program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr);
+            }
+        },
+        Instruction::Exit(expr) => {
+            generate_expr(program, Intent::Load, Register::EBX, expr, vars);
+            program.exit();
         }
-        Instruction::Exit(expr) => match &**expr {
-            Expression::Number(num) => {
-                program.mov_ebx_imm(*num);
-                program.exit();
-            }
-            Expression::String(_) => panic!("can't exit with a string"),
-            Expression::Ident(id) => match vars[id] {
-                Var::Global(_) => todo!(),
-                Var::Local(addr, _typ) => {
-                    program.mov_r_rm8(Reg32::EBX, RM32::EBP, addr);
-                    program.exit();
-                }
-            },
-        },
-        Instruction::Print(expr) => match &**expr {
-            Expression::Number(_) => panic!("can't print a number"),
-            Expression::String(_) => todo!(),
-            Expression::Ident(_id) => {
-                // let (addr, size) = string_info[id];
-                // program.write(addr, size - 1)
-                unimplemented!();
-            }
-        },
+        Instruction::Print(_expr) => {
+            // generate_expr(program, Intent::Load, expr, vars);
+            todo!()
+        }
         Instruction::Binary { lhs, rhs } => {
-            generate_code(program, lhs, vars);
-            generate_code(program, rhs, vars);
+            generate_instruction(program, lhs, vars);
+            generate_instruction(program, rhs, vars);
         }
         Instruction::Loop(block) => {
             program.loop_fn(|program| {
                 if let Some(block) = block {
-                    generate_code(program, block, vars);
+                    generate_instruction(program, block, vars);
                 }
             });
         }
@@ -145,7 +202,7 @@ fn run<E: Endian>() {
     for (id, typ) in vars_declared {
         let var = match typ {
             Type::String => Var::Global(typ),
-            Type::I32 | Type::U32 => {
+            Type::U32 => {
                 alloc -= 4;
                 Var::Local(alloc, typ)
             }
@@ -155,7 +212,7 @@ fn run<E: Endian>() {
     text.mov_edp_esp();
     text.sub_esp_imm8(alloc.unsigned_abs());
 
-    generate_code(&mut text, &instruction, &vars_addrs);
+    generate_instruction(&mut text, &instruction, &vars_addrs);
     text.mov_esp_edp();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;

@@ -4,6 +4,14 @@ section .text
 ; section .data
 ;     msg db 'Hello, World!', 0
 
+fun1:
+   mov ebx, 42
+   ret
+
+fun2:
+   mov ebx, 10
+   ret
+
 _start:
    ; write(1, msg, 13)
    ; mov eax, 4         ; system call for sys_write
@@ -23,6 +31,8 @@ _start:
    ; exit 
    mov eax, 1        ; system call for sys_exit
    mov ebx, [ebp-4]  ; exit code
+   call fun1
+   call fun2
    int 0x80          ; call kernel
 
    ; epilogue

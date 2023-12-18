@@ -1,16 +1,14 @@
 use std::{iter::Peekable, rc::Rc, str::CharIndices};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     String,
-    I32,
     U32,
 }
 impl Type {
     pub fn parse(typ: &str) -> Option<Self> {
         let typ = match typ {
             "u32" => Self::U32,
-            "i32" => Self::I32,
             "str" => Self::String,
             _ => {
                 return None;
@@ -18,6 +16,11 @@ impl Type {
         };
         Some(typ)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Operation {
+    Add,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +33,7 @@ pub enum Token {
     Number(u32),
     String(Rc<String>),
     Type(Type),
+    Operation(Operation),
     // symbols
     Semicolon,
     Colon,
@@ -74,6 +78,7 @@ impl Token {
             '=' => Token::Equal,
             '{' => Token::Open,
             '}' => Token::Close,
+            '+' => Token::Operation(Operation::Add),
             _ => {
                 return None;
             }

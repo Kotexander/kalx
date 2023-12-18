@@ -11,6 +11,7 @@ pub enum Mod32 {
     Disp00 = 0b00,
     Disp08 = 0b01,
     Disp32 = 0b10,
+    Direct = 0b11,
 }
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)]
@@ -19,8 +20,9 @@ pub enum RM32 {
     ECX = 0b001,
     EDX = 0b010,
     EBX = 0b011,
-    // SIB = 0b100,
-    /// this is also disp32 when Mod is 0
+    /// this is ESP when Mod is 0b11
+    SIB = 0b100,
+    /// this is disp32 when Mod is 0b00
     EBP = 0b101,
     ESI = 0b110,
     EDI = 0b111,
@@ -66,6 +68,30 @@ impl<E: Endian> Program<E> {
         let modrm32 = modrm32(Mod32::Disp08, rm, reg);
         self.code.extend_from_slice(&[0x8B, modrm32, disp as u8]);
     }
+
+    pub fn add_eax_imm(&mut self, imm: u32) {
+        self.code.push(0x05);
+        self.imm32(imm);
+    }
+    pub fn add_rm8_imm(&mut self, rm: RM32, disp: i8, imm: u32) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x81, modrm32, disp as u8]);
+        self.imm32(imm);
+    }
+    pub fn add_rm_imm(&mut self, rm: RM32, imm: u32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x81, modrm32]);
+        self.imm32(imm);
+    }
+    pub fn add_rm8_r(&mut self, rm: RM32, reg: Reg32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.extend_from_slice(&[0x01, modrm32, disp as u8]);
+    }
+    pub fn add_r_rm8(&mut self, reg: Reg32, rm: RM32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.extend_from_slice(&[0x03, modrm32, disp as u8]);
+    }
+
     /// used to sace the stack
     pub fn mov_edp_esp(&mut self) {
         self.code.extend_from_slice(&[
@@ -81,16 +107,6 @@ impl<E: Endian> Program<E> {
         ]);
     }
 
-    // pub fn mov_ptr_esp_disp8_imm(&mut self, disp: i8, imm: u32) {
-    //     self.code.extend_from_slice(&[0xC7, 0x45, disp as u8]);
-    //     self.imm32(imm);
-    // }
-    // pub fn mov_eax_edp_disp8(&mut self, disp: i8) {
-    //     self.code.extend_from_slice(&[0x8B, 0x5D, disp as u8]);
-    // }
-    // pub fn mov_ebx_edp_disp8(&mut self, disp: i8) {
-    //     self.code.extend_from_slice(&[0x8B, 0x5D, disp as u8]);
-    // }
     pub fn sub_esp_imm8(&mut self, imm: u8) {
         self.code.extend_from_slice(&[
             0x83, // sub

@@ -6,6 +6,10 @@ type Block = Option<Rc<Instruction>>;
 
 #[derive(Debug, Clone)]
 pub enum Instruction {
+    Declare {
+        id: Rc<String>,
+        value: Rc<Expression>,
+    },
     Assign {
         id: Rc<String>,
         value: Rc<Expression>,
@@ -23,6 +27,11 @@ pub enum Expression {
     Number(u32),
     String(Rc<String>),
     Ident(Rc<String>),
+    Operation {
+        lhs: Rc<Expression>,
+        op: Operation,
+        rhs: Rc<Expression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +125,19 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                         true
                     }
                 }
+                // expr + expr
+                [.., Node::AST(AST::Expression(lhs)), Node::Token(Token::Operation(op)), Node::AST(AST::Expression(rhs))] =>
+                {
+                    let node: AST = Rc::new(Expression::Operation {
+                        lhs: lhs.clone(),
+                        op: *op,
+                        rhs: rhs.clone(),
+                    })
+                    .into();
+                    nodes.reduce(3);
+                    nodes.push(node);
+                    true
+                }
                 // exit
                 [.., Node::Token(Token::Exit), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
                 {
@@ -132,15 +154,27 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                     nodes.push(node);
                     true
                 }
-                // assign
+                // declare
                 [.., Node::Token(Token::Var), Node::Token(Token::Ident(id)), Node::Token(Token::Equal), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
+                {
+                    let node: AST = Rc::new(Instruction::Declare {
+                        id: id.clone(),
+                        value: expr.clone(),
+                    })
+                    .into();
+                    nodes.reduce(5);
+                    nodes.push(node);
+                    true
+                }
+                // Assign
+                [.., Node::Token(Token::Ident(id)), Node::Token(Token::Equal), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
                 {
                     let node: AST = Rc::new(Instruction::Assign {
                         id: id.clone(),
                         value: expr.clone(),
                     })
                     .into();
-                    nodes.reduce(5);
+                    nodes.reduce(4);
                     nodes.push(node);
                     true
                 }

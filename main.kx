@@ -7,12 +7,10 @@
 // }
 
 var x = 69;
-var y = 420;
 var a = 32;
 var b = 64;
-var c = b;
+var c = b + b;
+c = c + b;
 
-// var x = 11;
-// x = x+1;
 
-exit c;
+exit c+a;
