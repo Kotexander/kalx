@@ -7,10 +7,13 @@
 // }
 
 var x = 69;
-var a = 32;
-var b = 64;
+var a = 10;
+var b = 5;
 var c = b + b;
-c = c + b;
+c = c + b + (b);
 
+//while x > 32 {
 
-exit c+a;
+//}
+
+exit c + a - (b + b);

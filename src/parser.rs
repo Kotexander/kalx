@@ -21,6 +21,10 @@ pub enum Instruction {
         rhs: Rc<Self>,
     },
     Loop(Block),
+    While {
+        expr: Rc<BooleanExpression>,
+        block: Block,
+    },
 }
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -33,6 +37,14 @@ pub enum Expression {
         rhs: Rc<Expression>,
     },
 }
+#[derive(Debug, Clone)]
+pub enum BooleanExpression {
+    Compare {
+        lhs: Rc<Expression>,
+        op: BooleanOperation,
+        rhs: Rc<Expression>,
+    },
+}
 
 #[derive(Debug, Clone)]
 #[allow(clippy::upper_case_acronyms)]
@@ -40,6 +52,7 @@ pub enum AST {
     Instruction(Rc<Instruction>),
     Block(Block),
     Expression(Rc<Expression>),
+    BooleanExpression(Rc<BooleanExpression>),
 }
 impl From<Block> for AST {
     fn from(value: Block) -> Self {
@@ -54,6 +67,11 @@ impl From<Rc<Instruction>> for AST {
 impl From<Rc<Expression>> for AST {
     fn from(value: Rc<Expression>) -> Self {
         Self::Expression(value)
+    }
+}
+impl From<Rc<BooleanExpression>> for AST {
+    fn from(value: Rc<BooleanExpression>) -> Self {
+        Self::BooleanExpression(value)
     }
 }
 
@@ -138,6 +156,27 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                     nodes.push(node);
                     true
                 }
+                // (expr) -> expr
+                [.., Node::Token(Token::POpen), Node::AST(AST::Expression(expr)), Node::Token(Token::PClose)] =>
+                {
+                    let node: AST = expr.clone().into();
+                    nodes.reduce(3);
+                    nodes.push(node);
+                    true
+                }
+                // bexpr cmp bexpr
+                [.., Node::AST(AST::Expression(lhs)), Node::Token(Token::BooleanOperation(op)), Node::AST(AST::Expression(rhs))] =>
+                {
+                    let node: AST = Rc::new(BooleanExpression::Compare {
+                        lhs: lhs.clone(),
+                        op: *op,
+                        rhs: rhs.clone(),
+                    })
+                    .into();
+                    nodes.reduce(3);
+                    nodes.push(node);
+                    true
+                }
                 // exit
                 [.., Node::Token(Token::Exit), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
                 {
@@ -190,16 +229,28 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                     true
                 }
                 // empty block
-                [.., Node::Token(Token::Open), Node::Token(Token::Close)] => {
+                [.., Node::Token(Token::BOpen), Node::Token(Token::BClose)] => {
                     let node: AST = None.into();
                     nodes.reduce(2);
                     nodes.push(node);
                     true
                 }
                 // block
-                [.., Node::Token(Token::Open), Node::AST(AST::Instruction(instruction)), Node::Token(Token::Close)] =>
+                [.., Node::Token(Token::BOpen), Node::AST(AST::Instruction(instruction)), Node::Token(Token::BClose)] =>
                 {
                     let node: AST = Some(instruction.clone()).into();
+                    nodes.reduce(3);
+                    nodes.push(node);
+                    true
+                }
+                // while
+                [.., Node::Token(Token::While), Node::AST(AST::BooleanExpression(bool_expr)), Node::AST(AST::Block(block))] =>
+                {
+                    let node: AST = Rc::new(Instruction::While {
+                        expr: bool_expr.clone(),
+                        block: block.clone(),
+                    })
+                    .into();
                     nodes.reduce(3);
                     nodes.push(node);
                     true

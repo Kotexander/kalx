@@ -21,6 +21,13 @@ impl Type {
 #[derive(Debug, Clone, Copy)]
 pub enum Operation {
     Add,
+    Sub,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BooleanOperation {
+    GreaterThen,
+    LessThen,
 }
 
 #[derive(Debug, Clone)]
@@ -29,17 +36,21 @@ pub enum Token {
     Exit,
     Print,
     Loop,
+    While,
     Ident(Rc<String>),
     Number(u32),
     String(Rc<String>),
     Type(Type),
     Operation(Operation),
+    BooleanOperation(BooleanOperation),
     // symbols
     Semicolon,
     Colon,
     Equal,
-    Open,
-    Close,
+    BOpen,
+    BClose,
+    POpen,
+    PClose,
 }
 impl Token {
     /// doesn't do symbols
@@ -49,6 +60,7 @@ impl Token {
             "var" => Self::Var,
             "print" => Self::Print,
             "loop" => Self::Loop,
+            "while" => Self::While,
             _ => {
                 // string
                 if token.starts_with('"') && token.ends_with('"') {
@@ -76,9 +88,14 @@ impl Token {
             ';' => Token::Semicolon,
             ':' => Token::Colon,
             '=' => Token::Equal,
-            '{' => Token::Open,
-            '}' => Token::Close,
+            '{' => Token::BOpen,
+            '}' => Token::BClose,
+            '(' => Token::POpen,
+            ')' => Token::PClose,
             '+' => Token::Operation(Operation::Add),
+            '-' => Token::Operation(Operation::Sub),
+            '>' => Token::BooleanOperation(BooleanOperation::GreaterThen),
+            '<' => Token::BooleanOperation(BooleanOperation::LessThen),
             _ => {
                 return None;
             }

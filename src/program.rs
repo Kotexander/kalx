@@ -92,6 +92,20 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0x03, modrm32, disp as u8]);
     }
 
+    pub fn sub_rm8_r(&mut self, rm: RM32, reg: Reg32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.extend_from_slice(&[0x29, modrm32, disp as u8]);
+    }
+    pub fn sub_r_rm8(&mut self, reg: Reg32, rm: RM32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.extend_from_slice(&[0x2B, modrm32, disp as u8]);
+    }
+    pub fn sub_rm_imm(&mut self, rm: RM32, imm: u32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EBP);
+        self.code.extend_from_slice(&[0x81, modrm32]);
+        self.imm32(imm);
+    }
+
     /// used to sace the stack
     pub fn mov_edp_esp(&mut self) {
         self.code.extend_from_slice(&[

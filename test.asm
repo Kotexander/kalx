@@ -39,5 +39,4 @@ _start:
    mov esp, ebp      ; Clean up local variables
    pop ebp           ; Restore the old base pointer
 
-
-   mov DWORD [256], 32 
+   sub DWORD [ebp-4], 2560;
