@@ -1,6 +1,5 @@
 mod elf;
 
-use core::num;
 use std::{collections::HashMap, rc::Rc};
 
 use elf::*;
@@ -12,7 +11,7 @@ mod tokenizer;
 
 mod parser;
 use parser::*;
-use tokenizer::Type;
+use tokenizer::*;
 
 #[derive(Debug, Clone, Copy)]
 enum Var {
@@ -89,12 +88,16 @@ fn analyse_instruction(instruction: &Instruction, vars: &mut VarTypes) {
 enum Register {
     EAX,
     EBX,
+    ECX,
+    EDX,
 }
 impl Into<RM32> for Register {
     fn into(self) -> RM32 {
         match self {
             Register::EAX => RM32::EAX,
             Register::EBX => RM32::EBX,
+            Register::ECX => RM32::ECX,
+            Register::EDX => RM32::EDX,
         }
     }
 }
@@ -103,6 +106,8 @@ impl Into<Reg32> for Register {
         match self {
             Register::EAX => Reg32::EAX,
             Register::EBX => Reg32::EBX,
+            Register::ECX => Reg32::ECX,
+            Register::EDX => Reg32::EDX,
         }
     }
 }
@@ -128,6 +133,9 @@ fn generate_expr<E: Endian>(
                 }
                 Register::EBX => {
                     program.mov_ebx_imm(*num);
+                }
+                _ => {
+                    todo!()
                 }
             },
             Intent::Add => match register {
@@ -233,7 +241,41 @@ fn generate_instruction<E: Endian>(
             });
         }
         Instruction::While { expr, block } => {
-            todo!()
+            program.jmp_rel(0);
+            let start = program.code.len();
+            // body
+            if let Some(block) = block {
+                generate_instruction(program, block, vars);
+            }
+            let first_jmp_end = program.code.len();
+            program.code[start - 1] = (first_jmp_end as i32 - start as i32) as u8;
+            // cmp
+            match &**expr {
+                BooleanExpression::Compare { lhs, op, rhs } => {
+                    let r_lhs = Register::EAX;
+                    let r_rhs = Register::EBX;
+                    generate_expr(program, Intent::Load, r_lhs, lhs, vars);
+                    generate_expr(program, Intent::Load, r_rhs, rhs, vars);
+                    program.cmp_r_rm(r_lhs.into(), r_rhs.into());
+                    match op {
+                        BooleanOperation::GreaterThen => {
+                            program.jg(0);
+                        }
+                        BooleanOperation::LessThen => {
+                            program.jl(0);
+                        }
+                    }
+                    let end = program.code.len();
+                    program.code[end - 1] = (start as i32 - end as i32) as u8;
+                }
+            }
+            // program.while_fn(|p| {
+            //     match &**expr {
+            //         BooleanExpression::Compare { lhs, op, rhs } => {
+            //             // pr
+            //         }
+            //     }
+            // });
         }
     }
 }

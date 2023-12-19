@@ -1,19 +1,16 @@
 // var hello = "Hello world!\n";
 // var bye = "Goodbye world!\n\n";
 
-// loop {
+//loop {
 //   print hello;
 //   print bye;
-// }
-
-var x = 69;
-var a = 10;
-var b = 5;
-var c = b + b;
-c = c + b + (b);
-
-//while x > 32 {
-
 //}
 
-exit c + a - (b + b);
+var x = 1;
+var y = 50;
+
+while (x-1) < (y-1) {
+    x = x+1;
+}
+
+exit x;

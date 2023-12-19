@@ -135,14 +135,20 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(string.to_bytes_with_nul());
     }
     pub fn jmp_rel(&mut self, rel: i8) {
-        self.code.push(0xEB);
-        self.code.push(rel as u8);
+        self.code.extend_from_slice(&[0xEB, rel as u8]);
+    }
+    pub fn jl(&mut self, rel: i8) {
+        self.code.extend_from_slice(&[0x7C, rel as u8]);
+    }
+    pub fn jg(&mut self, rel: i8) {
+        self.code.extend_from_slice(&[0x7f, rel as u8]);
     }
     pub fn loop_fn<F: Fn(&mut Program<E>)>(&mut self, f: F) {
-        let start = self.code.len() as i32;
+        let start = self.code.len();
         f(self);
-        let end = self.code.len() as i32;
-        self.jmp_rel((start - (end + 2)) as i8);
+        self.jmp_rel(0);
+        let end = self.code.len();
+        self.code[end - 1] = (start as i32 - end as i32) as u8;
     }
     pub fn mov_eax_imm(&mut self, imm: u32) {
         self.code.push(0xB8);
@@ -159,6 +165,11 @@ impl<E: Endian> Program<E> {
     pub fn mov_edx_imm(&mut self, imm: u32) {
         self.code.push(0xBA);
         self.imm32(imm);
+    }
+
+    pub fn cmp_r_rm(&mut self, reg: Reg32, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, reg);
+        self.code.extend_from_slice(&[0x3B, modrm32])
     }
 
     pub fn syscall(&mut self) {
