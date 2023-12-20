@@ -1,42 +1,18 @@
+section .data
+    format db "Hello, %s!", 0    ; Define the format string with null terminator
+    name db "Assembly", 0        ; Define the name string with null terminator
+
 section .text
-   global _start
+    extern printf               ; Declare the printf function from the C library
 
-; section .data
-;     msg db 'Hello, World!', 0
-
-fun1:
-   mov ebx, 42
-   ret
-
-fun2:
-   mov ebx, 10
-   ret
+    global _start               ; Entry point for the program
 
 _start:
-   ; write(1, msg, 13)
-   ; mov eax, 4         ; system call for sys_write
-   ; mov ebx, 1         ; file descriptor 1 is stdout
-   ; mov ecx, msg       ; message to write
-   ; mov edx, 13        ; message length
-   ; int 0x80           ; call kernel
+    push dword name             ; Push the address of the name string
+    push dword format           ; Push the address of the format string
+    call printf                 ; Call the printf function
 
-   ; prologue
-   push ebp       ; save old base pointer
-	mov ebp, esp   ; set new base pointer
-
-   ; init local vars
-	sub esp, 8            ; alloc 4` bytes
-   mov DWORD [ebp-4], 10 ; set 0
-   
-   ; exit 
-   mov eax, 1        ; system call for sys_exit
-   mov ebx, [ebp-4]  ; exit code
-   call fun1
-   call fun2
-   int 0x80          ; call kernel
-
-   ; epilogue
-   mov esp, ebp      ; Clean up local variables
-   pop ebp           ; Restore the old base pointer
-
-   sub DWORD [ebp-4], 2560;
+    ; Exit the program
+    mov eax, 1                  ; System call number for sys_exit
+    xor ebx, ebx                ; Exit code 0
+    int 0x80                    ; Interrupt to exit the program

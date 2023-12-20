@@ -1,15 +1,16 @@
 // var hello = "Hello world!\n";
 // var bye = "Goodbye world!\n\n";
 
-//loop {
+// loop {
 //   print hello;
 //   print bye;
-//}
+// }
 
 var x = 1;
 var y = 50;
+// var a = 1 > 10;
 
-while (x-1) < (y-1) {
+while x < y {
     x = x+1;
 }
 

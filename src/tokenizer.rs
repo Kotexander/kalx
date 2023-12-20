@@ -4,12 +4,14 @@ use std::{iter::Peekable, rc::Rc, str::CharIndices};
 pub enum Type {
     String,
     U32,
+    Bool,
 }
 impl Type {
     pub fn parse(typ: &str) -> Option<Self> {
         let typ = match typ {
             "u32" => Self::U32,
             "str" => Self::String,
+            "bool" => Self::Bool,
             _ => {
                 return None;
             }
@@ -20,14 +22,22 @@ impl Type {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Operation {
+    GTC,
+    LTC,
     Add,
     Sub,
+    Mul,
+    Div,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum BooleanOperation {
-    GreaterThen,
-    LessThen,
+impl Operation {
+    pub fn precedence(self) -> i32 {
+        match self {
+            Operation::GTC | Operation::LTC => 0,
+            Operation::Add | Operation::Sub => 1,
+            Operation::Mul | Operation::Div => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -40,9 +50,9 @@ pub enum Token {
     Ident(Rc<String>),
     Number(u32),
     String(Rc<String>),
+    Bool(bool),
     Type(Type),
     Operation(Operation),
-    BooleanOperation(BooleanOperation),
     // symbols
     Semicolon,
     Colon,
@@ -61,6 +71,8 @@ impl Token {
             "print" => Self::Print,
             "loop" => Self::Loop,
             "while" => Self::While,
+            "true" => Self::Bool(true),
+            "false" => Self::Bool(false),
             _ => {
                 // string
                 if token.starts_with('"') && token.ends_with('"') {
@@ -92,10 +104,12 @@ impl Token {
             '}' => Token::BClose,
             '(' => Token::POpen,
             ')' => Token::PClose,
-            '+' => Token::Operation(Operation::Add),
-            '-' => Token::Operation(Operation::Sub),
-            '>' => Token::BooleanOperation(BooleanOperation::GreaterThen),
-            '<' => Token::BooleanOperation(BooleanOperation::LessThen),
+            '+' => Token::Operation(Operation::Add.into()),
+            '-' => Token::Operation(Operation::Sub.into()),
+            '*' => Token::Operation(Operation::Mul.into()),
+            '/' => Token::Operation(Operation::Div.into()),
+            '>' => Token::Operation(Operation::GTC.into()),
+            '<' => Token::Operation(Operation::LTC.into()),
             _ => {
                 return None;
             }

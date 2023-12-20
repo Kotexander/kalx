@@ -22,7 +22,7 @@ pub enum Instruction {
     },
     Loop(Block),
     While {
-        expr: Rc<BooleanExpression>,
+        expr: Rc<Expression>,
         block: Block,
     },
 }
@@ -37,14 +37,6 @@ pub enum Expression {
         rhs: Rc<Expression>,
     },
 }
-#[derive(Debug, Clone)]
-pub enum BooleanExpression {
-    Compare {
-        lhs: Rc<Expression>,
-        op: BooleanOperation,
-        rhs: Rc<Expression>,
-    },
-}
 
 #[derive(Debug, Clone)]
 #[allow(clippy::upper_case_acronyms)]
@@ -52,7 +44,6 @@ pub enum AST {
     Instruction(Rc<Instruction>),
     Block(Block),
     Expression(Rc<Expression>),
-    BooleanExpression(Rc<BooleanExpression>),
 }
 impl From<Block> for AST {
     fn from(value: Block) -> Self {
@@ -67,11 +58,6 @@ impl From<Rc<Instruction>> for AST {
 impl From<Rc<Expression>> for AST {
     fn from(value: Rc<Expression>) -> Self {
         Self::Expression(value)
-    }
-}
-impl From<Rc<BooleanExpression>> for AST {
-    fn from(value: Rc<BooleanExpression>) -> Self {
-        Self::BooleanExpression(value)
     }
 }
 
@@ -143,36 +129,33 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                         true
                     }
                 }
-                // expr + expr
+                // expr op expr
                 [.., Node::AST(AST::Expression(lhs)), Node::Token(Token::Operation(op)), Node::AST(AST::Expression(rhs))] =>
                 {
-                    let node: AST = Rc::new(Expression::Operation {
-                        lhs: lhs.clone(),
-                        op: *op,
-                        rhs: rhs.clone(),
-                    })
-                    .into();
-                    nodes.reduce(3);
-                    nodes.push(node);
-                    true
+                    let mut valid = true;
+                    if let Some(Token::Operation(next_op)) = tokenizer.peek() {
+                        if op.precedence() < next_op.precedence() {
+                            valid = false;
+                        }
+                    }
+                    if valid {
+                        let node: AST = Rc::new(Expression::Operation {
+                            lhs: lhs.clone(),
+                            op: *op,
+                            rhs: rhs.clone(),
+                        })
+                        .into();
+                        nodes.reduce(3);
+                        nodes.push(node);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 // (expr) -> expr
                 [.., Node::Token(Token::POpen), Node::AST(AST::Expression(expr)), Node::Token(Token::PClose)] =>
                 {
                     let node: AST = expr.clone().into();
-                    nodes.reduce(3);
-                    nodes.push(node);
-                    true
-                }
-                // bexpr cmp bexpr
-                [.., Node::AST(AST::Expression(lhs)), Node::Token(Token::BooleanOperation(op)), Node::AST(AST::Expression(rhs))] =>
-                {
-                    let node: AST = Rc::new(BooleanExpression::Compare {
-                        lhs: lhs.clone(),
-                        op: *op,
-                        rhs: rhs.clone(),
-                    })
-                    .into();
                     nodes.reduce(3);
                     nodes.push(node);
                     true
@@ -244,10 +227,10 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                     true
                 }
                 // while
-                [.., Node::Token(Token::While), Node::AST(AST::BooleanExpression(bool_expr)), Node::AST(AST::Block(block))] =>
+                [.., Node::Token(Token::While), Node::AST(AST::Expression(expr)), Node::AST(AST::Block(block))] =>
                 {
                     let node: AST = Rc::new(Instruction::While {
-                        expr: bool_expr.clone(),
+                        expr: expr.clone(),
                         block: block.clone(),
                     })
                     .into();
