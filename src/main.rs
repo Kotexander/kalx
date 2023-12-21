@@ -16,29 +16,16 @@ use tokenizer::*;
 mod code_generator;
 use code_generator::*;
 
-fn run<E: Endian>() {
+fn run<E: Endian>() -> Result<(), String> {
     let _ = std::fs::remove_file("output/main.o");
     let _ = std::fs::remove_file("output/main");
     let code = std::fs::read_to_string("main.kx").unwrap();
 
-    let instruction = match parse(&code) {
-        Ok(instructions) => instructions,
-        Err(e) => {
-            panic!("{e}");
-        }
-    };
-    // println!("instructions: {instruction:#?}");
-    match std::fs::write(
-        "output/log.txt",
-        format!("instructions: {instruction:#?}").as_bytes(),
-    ) {
-        Ok(_) => println!("successfully writen log file"),
-        Err(_) => println!("failed to write log file"),
-    }
+    let instruction = parse(&code)?;
 
     let mut vars = Vars::new();
     let mut strings = Strings::new();
-    analyse_instruction(&instruction, &mut vars, &mut strings);
+    analyse_instruction(&instruction, &mut vars, &mut strings)?;
 
     let mut text = Program::<E>::new();
 
@@ -170,7 +157,8 @@ fn run<E: Endian>() {
     );
 
     builder.update();
-    write(&builder.bytes())
+    write(&builder.bytes());
+    Ok(())
 }
 
 fn write(bytes: &[u8]) {
@@ -186,5 +174,8 @@ fn write(bytes: &[u8]) {
 }
 
 fn main() {
-    run::<LittleEndian>();
+    match run::<LittleEndian>() {
+        Ok(_) => println!("Build successfull!\n\n"),
+        Err(e) => println!("Build failed: {e}\n\n"),
+    }
 }

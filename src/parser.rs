@@ -299,7 +299,8 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
     }
 
     if nodes.nodes.len() != 1 {
-        Err(format!("node list is not 1: {nodes:#?}"))
+        let nodes: Vec<&Node> = nodes.nodes.iter().skip(1).collect();
+        Err(format!("Node list is not 1! Nodes not reduced: {nodes:#?}"))
     } else if let Node::AST(AST::Instruction(instructions)) = nodes.nodes.pop().unwrap() {
         Ok(instructions)
     } else {

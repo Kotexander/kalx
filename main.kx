@@ -20,6 +20,7 @@ print("Hello world!\n");
     // x = x+1;
 // }
 
+// var g = "f" + 32;
 
 var j = 0;
 var s = "hi     ";
@@ -28,6 +29,7 @@ while j < 10 {
     print("loop\n");
     j = j + 1;
 }
+
 
 print("last1\n");
 print("last2\n");

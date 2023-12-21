@@ -59,20 +59,23 @@ impl Vars {
         }
         self.vars.insert(id, (typ, self.alloc));
     }
-    pub fn contains_key(&self, k: &Rc<String>) -> bool {
-        self.vars.contains_key(k)
+    pub fn contains_str(&self, s: &Rc<String>) -> bool {
+        self.vars.contains_key(s)
     }
     pub fn allocated(&self) -> i32 {
         self.alloc
     }
-}
-impl std::ops::Index<&Rc<String>> for Vars {
-    type Output = (Type, i32);
-
-    fn index(&self, index: &Rc<String>) -> &Self::Output {
-        &self.vars[index]
+    pub fn get(&self, s: &Rc<String>) -> Option<&(Type, i32)> {
+        self.vars.get(s)
     }
 }
+// impl std::ops::Index<&Rc<String>> for Vars {
+//     type Output = (Type, i32);
+
+//     fn index(&self, index: &Rc<String>) -> &Self::Output {
+//         &self.vars[index]
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct RelString {
@@ -128,65 +131,88 @@ impl Strings {
     }
 }
 
-pub fn analyse_expr(expr: &Expression, vars: &Vars, strings: &mut Strings) -> Type {
+pub fn analyse_expr(expr: &Expression, vars: &Vars, strings: &mut Strings) -> Result<Type, String> {
     match expr {
-        Expression::Number(_) => Type::U32,
+        Expression::Number(_) => Ok(Type::U32),
         Expression::String(string) => {
             strings.add(string);
-            Type::String
+            Ok(Type::String)
         }
-        Expression::Ident(id) => vars[id].0,
+        Expression::Ident(id) => match vars.get(id) {
+            Some((typ, _)) => Ok(*typ),
+            None => Err(format!("undefined variable: {id}")),
+        },
         Expression::Operation { lhs, op, rhs } => {
-            let lhs = analyse_expr(lhs, vars, strings);
-            let rhs = analyse_expr(rhs, vars, strings);
-            assert_eq!(lhs, rhs);
-            match op {
-                Operation::GTC | Operation::LTC => Type::Bool,
-                _ => lhs,
+            let lhs = analyse_expr(lhs, vars, strings)?;
+            let rhs = analyse_expr(rhs, vars, strings)?;
+
+            if lhs == rhs {
+                Ok(match op {
+                    Operation::GTC | Operation::LTC => Type::Bool,
+                    _ => lhs,
+                })
+            } else {
+                Err(format!("tried invalid operation: {lhs} {op} {rhs}"))
             }
         }
         Expression::Index { expr, index } => {
-            let i = analyse_expr(index, vars, strings);
-            assert_eq!(i, Type::U32);
-            analyse_expr(expr, vars, strings)
+            let typ = analyse_expr(expr, vars, strings)?;
+            let i = analyse_expr(index, vars, strings)?;
+
+            if i == Type::U32 {
+                Ok(typ)
+            } else {
+                Err(format!("index must have type of u32 but got: {i}"))
+            }
         }
         Expression::Function { name: _, arg } => analyse_expr(arg, vars, strings),
     }
 }
-pub fn analyse_instruction(instruction: &Instruction, vars: &mut Vars, strings: &mut Strings) {
+pub fn analyse_instruction(
+    instruction: &Instruction,
+    vars: &mut Vars,
+    strings: &mut Strings,
+) -> Result<(), String> {
     match instruction {
         Instruction::Declare { id, value } => {
-            if vars.contains_key(id) {
-                panic!("duplicate declaration");
-            } else {
-                let typ = analyse_expr(value, vars, strings);
+            if !vars.contains_str(id) {
+                let typ = analyse_expr(value, vars, strings)?;
                 vars.add(id.clone(), typ);
+                Ok(())
+            } else {
+                Err(format!("duplicate declaration of {id}"))
             }
         }
         Instruction::Assign { id, value } => {
-            if !vars.contains_key(id) {
-                panic!("assignment before declaration");
+            if vars.contains_str(id) {
+                analyse_expr(value, vars, strings)?;
+                Ok(())
+            } else {
+                Err(format!("assignment of {id} before declaration"))
             }
-            analyse_expr(value, vars, strings);
         }
         Instruction::Expr(expr) => {
-            analyse_expr(expr, vars, strings);
+            analyse_expr(expr, vars, strings)?;
+            Ok(())
         }
         Instruction::Binary { lhs, rhs } => {
-            analyse_instruction(lhs, vars, strings);
-            analyse_instruction(rhs, vars, strings);
+            analyse_instruction(lhs, vars, strings)?;
+            analyse_instruction(rhs, vars, strings)?;
+            Ok(())
         }
         Instruction::Loop(block) => {
             if let Some(block) = block {
-                analyse_instruction(block, vars, strings);
+                analyse_instruction(block, vars, strings)?;
             }
+            Ok(())
         }
         Instruction::While { expr, block } => {
-            let typ = analyse_expr(expr, vars, strings);
+            let typ = analyse_expr(expr, vars, strings)?;
             assert_eq!(typ, Type::Bool);
             if let Some(block) = block {
-                analyse_instruction(block, vars, strings);
+                analyse_instruction(block, vars, strings)?;
             }
+            Ok(())
         }
     }
 }
@@ -237,24 +263,24 @@ pub fn generate_expr<E: Endian>(
             Intent::Sub => todo!(),
         },
         Expression::Ident(id) => {
-            let (typ, addr) = vars[id];
+            let (typ, addr) = vars.get(id).unwrap();
             match typ {
                 Type::String => match intent {
                     Intent::Load => {
-                        program.mov_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap())
+                        program.mov_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap())
                     }
                     Intent::Add => todo!(),
                     Intent::Sub => todo!(),
                 },
                 Type::U32 => match intent {
                     Intent::Load => {
-                        program.mov_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
+                        program.mov_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
                     }
                     Intent::Add => {
-                        program.add_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
+                        program.add_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
                     }
                     Intent::Sub => {
-                        program.sub_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
+                        program.sub_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
                     }
                 },
                 Type::Bool => todo!(),
@@ -323,10 +349,10 @@ pub fn generate_expr<E: Endian>(
                             rel_str.add(rel);
                         }
                         Expression::Ident(id) => {
-                            let (typ, addr) = vars[id];
+                            let (typ, addr) = vars.get(id).unwrap();
                             if let Type::String = typ {
                                 // program.write_const(0, 1);
-                                program.write_rm8(RM32::EBP, addr.try_into().unwrap(), 5);
+                                program.write_rm8(RM32::EBP, (*addr).try_into().unwrap(), 5);
                                 // todo!()
                             } else {
                                 todo!()
@@ -349,7 +375,6 @@ pub fn generate_expr<E: Endian>(
         }
     }
 }
-
 pub fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
@@ -358,15 +383,15 @@ pub fn generate_instruction<E: Endian>(
 ) {
     match instruction {
         Instruction::Declare { id, value } | Instruction::Assign { id, value } => {
-            let (typ, addr) = vars[id];
+            let (typ, addr) = vars.get(id).unwrap();
             match typ {
                 Type::String => {
                     generate_expr(program, Intent::Load, Register::EAX, value, vars, strings);
-                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr.try_into().unwrap());
+                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, (*addr).try_into().unwrap());
                 }
                 Type::U32 => {
                     generate_expr(program, Intent::Load, Register::EAX, value, vars, strings);
-                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr.try_into().unwrap());
+                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, (*addr).try_into().unwrap());
                 }
                 Type::Bool => todo!(),
             }

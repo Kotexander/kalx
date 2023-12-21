@@ -1,4 +1,4 @@
-use std::{iter::Peekable, rc::Rc, str::CharIndices};
+use std::{fmt::Display, iter::Peekable, rc::Rc, str::CharIndices};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
@@ -19,6 +19,16 @@ impl Type {
         Some(typ)
     }
 }
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Type::String => "str",
+            Type::U32 => "u32",
+            Type::Bool => "bool",
+        };
+        write!(f, "{s}")
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
@@ -29,6 +39,19 @@ pub enum Operation {
     Sub,
     Mul,
     Div,
+}
+impl Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Operation::GTC => ">",
+            Operation::LTC => "<",
+            Operation::Add => "+",
+            Operation::Sub => "-",
+            Operation::Mul => "*",
+            Operation::Div => "/",
+        };
+        write!(f, "{s}")
+    }
 }
 
 impl Operation {
@@ -67,7 +90,7 @@ pub enum Token {
 }
 impl Token {
     /// doesn't do symbols
-    fn parse(token: String) -> Option<Self> {
+    fn parse(token: String) -> Self {
         let token = match token.as_str() {
             "exit" => Self::Exit,
             "var" => Self::Var,
@@ -96,7 +119,7 @@ impl Token {
                 }
             }
         };
-        Some(token)
+        token
     }
     fn symbol(sym: char) -> Option<Self> {
         let sym = match sym {
@@ -194,6 +217,6 @@ impl<'a> Iterator for Tokenizer<'a> {
         }
 
         let token = &self.code[start..=end];
-        Token::parse(String::from(token))
+        Some(Token::parse(String::from(token)))
     }
 }
