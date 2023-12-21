@@ -1,10 +1,6 @@
-use super::*;
+use std::ffi::CString;
 
-#[derive(Debug, Clone, Copy)]
-pub enum Var {
-    Global,
-    Local(i32),
-}
+use super::*;
 
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
@@ -43,63 +39,164 @@ pub enum Intent {
     Sub,
 }
 
-pub type VarTypes = HashMap<Rc<String>, Type>;
-pub type VarAddresses = HashMap<Rc<String>, Var>;
+#[derive(Debug, Clone)]
+pub struct Vars {
+    alloc: i32,
+    vars: HashMap<Rc<String>, (Type, i32)>,
+}
+impl Vars {
+    pub fn new() -> Self {
+        Self {
+            alloc: 0,
+            vars: HashMap::new(),
+        }
+    }
+    pub fn add(&mut self, id: Rc<String>, typ: Type) {
+        match typ {
+            Type::String => self.alloc -= 4,
+            Type::U32 => self.alloc -= 4,
+            Type::Bool => self.alloc -= 1,
+        }
+        self.vars.insert(id, (typ, self.alloc));
+    }
+    pub fn contains_key(&self, k: &Rc<String>) -> bool {
+        self.vars.contains_key(k)
+    }
+    pub fn allocated(&self) -> i32 {
+        self.alloc
+    }
+}
+impl std::ops::Index<&Rc<String>> for Vars {
+    type Output = (Type, i32);
 
-pub fn analyse_expr(expr: &Expression, vars: &VarTypes) -> Type {
+    fn index(&self, index: &Rc<String>) -> &Self::Output {
+        &self.vars[index]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RelString {
+    pub sym: Rc<String>,
+    pub rels: Vec<u32>,
+}
+impl RelString {
+    pub fn new(sym: Rc<String>) -> Self {
+        Self { sym, rels: vec![] }
+    }
+    pub fn add(&mut self, rel: u32) {
+        self.rels.push(rel);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Strings {
+    strs: HashMap<Rc<CString>, (RelString, u32)>,
+    index: u32,
+}
+impl Strings {
+    pub fn new() -> Self {
+        Self {
+            strs: HashMap::new(),
+            index: 0,
+        }
+    }
+    pub fn add(&mut self, s: &Rc<CString>) {
+        if !self.strs.contains_key(s) {
+            let rel_str = RelString::new(Rc::new(format!("str{}", self.strs.len())));
+            self.strs.insert(s.clone(), (rel_str, self.index));
+            self.index += s.as_bytes_with_nul().len() as u32;
+        }
+    }
+    pub fn get_mut(&mut self, s: &Rc<CString>) -> Option<&mut (RelString, u32)> {
+        self.strs.get_mut(s)
+    }
+    pub fn values(&self) -> Vec<&(RelString, u32)> {
+        let mut v: Vec<&(RelString, u32)> = self.strs.values().collect();
+        v.sort_by(|(_, a1), (_, a2)| a1.cmp(a2));
+        v
+    }
+    pub fn values_mut(&mut self) -> Vec<&mut (RelString, u32)> {
+        let mut v: Vec<&mut (RelString, u32)> = self.strs.values_mut().collect();
+        v.sort_by(|(_, a1), (_, a2)| a1.cmp(a2));
+        v
+    }
+    pub fn keys(&self) -> Vec<&Rc<CString>> {
+        let mut v: Vec<(&Rc<CString>, &(RelString, u32))> = self.strs.iter().collect();
+        v.sort_by(|(_, (_, a1)), (_, (_, a2))| a1.cmp(a2));
+
+        v.into_iter().map(|(k, _)| k).collect()
+    }
+}
+
+pub fn analyse_expr(expr: &Expression, vars: &Vars, strings: &mut Strings) -> Type {
     match expr {
         Expression::Number(_) => Type::U32,
-        Expression::String(_) => Type::String,
-        Expression::Ident(id) => vars[id],
+        Expression::String(string) => {
+            strings.add(string);
+            Type::String
+        }
+        Expression::Ident(id) => vars[id].0,
         Expression::Operation { lhs, op, rhs } => {
-            let lhs = analyse_expr(lhs, vars);
-            let rhs = analyse_expr(rhs, vars);
+            let lhs = analyse_expr(lhs, vars, strings);
+            let rhs = analyse_expr(rhs, vars, strings);
             assert_eq!(lhs, rhs);
             match op {
                 Operation::GTC | Operation::LTC => Type::Bool,
                 _ => lhs,
             }
         }
+        Expression::Index { expr, index } => {
+            let i = analyse_expr(index, vars, strings);
+            assert_eq!(i, Type::U32);
+            analyse_expr(expr, vars, strings)
+        }
+        Expression::Function { name: _, arg } => analyse_expr(arg, vars, strings),
     }
 }
-pub fn analyse_instruction(instruction: &Instruction, vars: &mut VarTypes) {
+pub fn analyse_instruction(instruction: &Instruction, vars: &mut Vars, strings: &mut Strings) {
     match instruction {
         Instruction::Declare { id, value } => {
             if vars.contains_key(id) {
                 panic!("duplicate declaration");
             } else {
-                let typ = analyse_expr(value, vars);
-                vars.insert(id.clone(), typ);
+                let typ = analyse_expr(value, vars, strings);
+                vars.add(id.clone(), typ);
             }
         }
         Instruction::Assign { id, value } => {
             if !vars.contains_key(id) {
                 panic!("assignment before declaration");
             }
-            analyse_expr(value, vars);
+            analyse_expr(value, vars, strings);
         }
-        Instruction::Exit(expr) => {
-            analyse_expr(expr, vars);
-        }
-        Instruction::Print(expr) => {
-            analyse_expr(expr, vars);
+        Instruction::Expr(expr) => {
+            analyse_expr(expr, vars, strings);
         }
         Instruction::Binary { lhs, rhs } => {
-            analyse_instruction(lhs, vars);
-            analyse_instruction(rhs, vars);
+            analyse_instruction(lhs, vars, strings);
+            analyse_instruction(rhs, vars, strings);
         }
         Instruction::Loop(block) => {
             if let Some(block) = block {
-                analyse_instruction(block, vars);
+                analyse_instruction(block, vars, strings);
             }
         }
         Instruction::While { expr, block } => {
-            let typ = analyse_expr(expr, vars);
+            let typ = analyse_expr(expr, vars, strings);
             assert_eq!(typ, Type::Bool);
             if let Some(block) = block {
-                analyse_instruction(block, vars);
+                analyse_instruction(block, vars, strings);
             }
         }
+    }
+}
+
+pub fn mov_reg_imm<E: Endian>(program: &mut Program<E>, reg: Register, num: u32) -> u32 {
+    match reg {
+        Register::EAX => program.mov_eax_imm(num),
+        Register::EBX => program.mov_ebx_imm(num),
+        Register::ECX => program.mov_ecx_imm(num),
+        Register::EDX => program.mov_edx_imm(num),
     }
 }
 
@@ -108,63 +205,70 @@ pub fn generate_expr<E: Endian>(
     intent: Intent,
     register: Register,
     expr: &Expression,
-    vars: &VarAddresses,
+    vars: &Vars,
+    strings: &mut Strings,
 ) {
     match expr {
         Expression::Number(num) => match intent {
-            Intent::Load => match register {
-                Register::EAX => {
-                    program.mov_eax_imm(*num);
-                }
-                Register::EBX => {
-                    program.mov_ebx_imm(*num);
-                }
-                _ => {
-                    todo!()
-                }
-            },
+            Intent::Load => {
+                mov_reg_imm(program, register, *num);
+            }
             Intent::Add => match register {
                 Register::EAX => {
                     program.add_eax_imm(*num);
                 }
                 _ => {
+                    // TODO: replace with register specific instructions
                     program.add_rm_imm(register.into(), *num);
                 }
             },
             Intent::Sub => {
+                // TODO: replace with register specific instructions
                 program.sub_rm_imm(register.into(), *num);
             }
         },
-        Expression::String(_) => todo!(),
-        Expression::Ident(id) => match intent {
-            Intent::Load => match vars[id] {
-                Var::Global => todo!(),
-                Var::Local(addr) => {
-                    program.mov_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
-                }
-            },
-            Intent::Add => match vars[id] {
-                Var::Global => todo!(),
-                Var::Local(addr) => {
-                    program.add_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
-                }
-            },
-            Intent::Sub => match vars[id] {
-                Var::Global => todo!(),
-                Var::Local(addr) => {
-                    program.sub_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
-                }
-            },
+        Expression::String(string) => match intent {
+            Intent::Load => {
+                let (rel_str, addr) = strings.get_mut(string).unwrap();
+                let rel = mov_reg_imm(program, register, *addr);
+                rel_str.add(rel);
+            }
+            Intent::Add => todo!(),
+            Intent::Sub => todo!(),
         },
+        Expression::Ident(id) => {
+            let (typ, addr) = vars[id];
+            match typ {
+                Type::String => match intent {
+                    Intent::Load => {
+                        program.mov_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap())
+                    }
+                    Intent::Add => todo!(),
+                    Intent::Sub => todo!(),
+                },
+                Type::U32 => match intent {
+                    Intent::Load => {
+                        program.mov_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
+                    }
+                    Intent::Add => {
+                        program.add_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
+                    }
+                    Intent::Sub => {
+                        program.sub_r_rm8(register.into(), RM32::EBP, addr.try_into().unwrap());
+                    }
+                },
+                Type::Bool => todo!(),
+            }
+        }
         Expression::Operation { lhs, op, rhs } => match intent {
             Intent::Load => {
-                generate_expr(program, Intent::Load, register, lhs, vars);
+                generate_expr(program, Intent::Load, register, lhs, vars, strings);
                 match op {
                     Operation::Add => {
-                        generate_expr(program, Intent::Add, register, rhs, vars);
+                        generate_expr(program, Intent::Add, register, rhs, vars, strings);
                     }
                     Operation::Sub => {
-                        generate_expr(program, Intent::Sub, register, rhs, vars);
+                        generate_expr(program, Intent::Sub, register, rhs, vars, strings);
                     }
                     Operation::Mul => todo!(),
                     Operation::Div => todo!(),
@@ -173,13 +277,13 @@ pub fn generate_expr<E: Endian>(
                 }
             }
             Intent::Add => {
-                generate_expr(program, Intent::Add, register, lhs, vars);
+                generate_expr(program, Intent::Add, register, lhs, vars, strings);
                 match op {
                     Operation::Add => {
-                        generate_expr(program, Intent::Add, register, rhs, vars);
+                        generate_expr(program, Intent::Add, register, rhs, vars, strings);
                     }
                     Operation::Sub => {
-                        generate_expr(program, Intent::Sub, register, rhs, vars);
+                        generate_expr(program, Intent::Sub, register, rhs, vars, strings);
                     }
                     Operation::Mul => todo!(),
                     Operation::Div => todo!(),
@@ -188,13 +292,13 @@ pub fn generate_expr<E: Endian>(
                 }
             }
             Intent::Sub => {
-                generate_expr(program, Intent::Sub, register, lhs, vars);
+                generate_expr(program, Intent::Sub, register, lhs, vars, strings);
                 match op {
                     Operation::Add => {
-                        generate_expr(program, Intent::Sub, register, rhs, vars);
+                        generate_expr(program, Intent::Sub, register, rhs, vars, strings);
                     }
                     Operation::Sub => {
-                        generate_expr(program, Intent::Add, register, rhs, vars);
+                        generate_expr(program, Intent::Add, register, rhs, vars, strings);
                     }
                     Operation::Mul => todo!(),
                     Operation::Div => todo!(),
@@ -203,37 +307,81 @@ pub fn generate_expr<E: Endian>(
                 }
             }
         },
+        Expression::Index { expr: _, index: _ } => todo!(),
+        Expression::Function { name, arg } => {
+            match &name[..] {
+                "exit" => {
+                    generate_expr(program, Intent::Load, Register::EBX, arg, vars, strings);
+                    program.exit();
+                }
+                "print" => {
+                    match &**arg {
+                        Expression::String(string) => {
+                            let (rel_str, addr) = strings.get_mut(string).unwrap();
+                            let rel =
+                                program.write_const(*addr, string.as_bytes_with_nul().len() as u32);
+                            rel_str.add(rel);
+                        }
+                        Expression::Ident(id) => {
+                            let (typ, addr) = vars[id];
+                            if let Type::String = typ {
+                                // program.write_const(0, 1);
+                                program.write_rm8(RM32::EBP, addr.try_into().unwrap(), 5);
+                                // todo!()
+                            } else {
+                                todo!()
+                            }
+                        }
+                        Expression::Number(_) => todo!(),
+                        Expression::Operation {
+                            lhs: _,
+                            op: _,
+                            rhs: _,
+                        } => todo!(),
+                        Expression::Index { expr: _, index: _ } => todo!(),
+                        Expression::Function { name: _, arg: _ } => todo!(),
+                    }
+                }
+                _ => {
+                    panic!("unknown function: {name}");
+                }
+            }
+        }
     }
 }
 
 pub fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
-    vars: &VarAddresses,
+    vars: &Vars,
+    strings: &mut Strings,
 ) {
     match instruction {
-        Instruction::Declare { id, value } | Instruction::Assign { id, value } => match vars[id] {
-            Var::Global => todo!(),
-            Var::Local(addr) => {
-                generate_expr(program, Intent::Load, Register::EAX, value, vars);
-                program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr.try_into().unwrap());
+        Instruction::Declare { id, value } | Instruction::Assign { id, value } => {
+            let (typ, addr) = vars[id];
+            match typ {
+                Type::String => {
+                    generate_expr(program, Intent::Load, Register::EAX, value, vars, strings);
+                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr.try_into().unwrap());
+                }
+                Type::U32 => {
+                    generate_expr(program, Intent::Load, Register::EAX, value, vars, strings);
+                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, addr.try_into().unwrap());
+                }
+                Type::Bool => todo!(),
             }
-        },
-        Instruction::Exit(expr) => {
-            generate_expr(program, Intent::Load, Register::EBX, expr, vars);
-            program.exit();
         }
-        Instruction::Print(_expr) => {
-            todo!()
+        Instruction::Expr(expr) => {
+            generate_expr(program, Intent::Load, Register::EAX, expr, vars, strings);
         }
         Instruction::Binary { lhs, rhs } => {
-            generate_instruction(program, lhs, vars);
-            generate_instruction(program, rhs, vars);
+            generate_instruction(program, lhs, vars, strings);
+            generate_instruction(program, rhs, vars, strings);
         }
         Instruction::Loop(block) => {
             program.loop_fn(|program| {
                 if let Some(block) = block {
-                    generate_instruction(program, block, vars);
+                    generate_instruction(program, block, vars, strings);
                 }
             });
         }
@@ -242,7 +390,7 @@ pub fn generate_instruction<E: Endian>(
             let start = program.code.len();
             // body
             if let Some(block) = block {
-                generate_instruction(program, block, vars);
+                generate_instruction(program, block, vars, strings);
             }
             let first_jmp_end = program.code.len();
             let rel: i8 = (first_jmp_end as i32 - start as i32).try_into().unwrap();
@@ -252,8 +400,8 @@ pub fn generate_instruction<E: Endian>(
                 Expression::Operation { lhs, op, rhs } => {
                     let r_lhs = Register::EAX;
                     let r_rhs = Register::EBX;
-                    generate_expr(program, Intent::Load, r_lhs, lhs, vars);
-                    generate_expr(program, Intent::Load, r_rhs, rhs, vars);
+                    generate_expr(program, Intent::Load, r_lhs, lhs, vars, strings);
+                    generate_expr(program, Intent::Load, r_rhs, rhs, vars, strings);
                     program.cmp_r_rm(r_lhs.into(), r_rhs.into());
                     match op {
                         Operation::GTC => {

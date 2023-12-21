@@ -21,6 +21,7 @@ impl Type {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Operation {
     GTC,
     LTC,
@@ -61,6 +62,8 @@ pub enum Token {
     BClose,
     POpen,
     PClose,
+    SOpen,
+    SClose,
 }
 impl Token {
     /// doesn't do symbols
@@ -104,12 +107,14 @@ impl Token {
             '}' => Token::BClose,
             '(' => Token::POpen,
             ')' => Token::PClose,
-            '+' => Token::Operation(Operation::Add.into()),
-            '-' => Token::Operation(Operation::Sub.into()),
-            '*' => Token::Operation(Operation::Mul.into()),
-            '/' => Token::Operation(Operation::Div.into()),
-            '>' => Token::Operation(Operation::GTC.into()),
-            '<' => Token::Operation(Operation::LTC.into()),
+            '[' => Token::SOpen,
+            ']' => Token::SClose,
+            '+' => Token::Operation(Operation::Add),
+            '-' => Token::Operation(Operation::Sub),
+            '*' => Token::Operation(Operation::Mul),
+            '/' => Token::Operation(Operation::Div),
+            '>' => Token::Operation(Operation::GTC),
+            '<' => Token::Operation(Operation::LTC),
             _ => {
                 return None;
             }

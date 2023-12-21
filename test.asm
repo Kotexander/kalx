@@ -3,11 +3,12 @@ section .data
     name db "Assembly", 0        ; Define the name string with null terminator
 
 section .text
+    global main
+    ; global _start               ; Entry point for the program
     extern printf               ; Declare the printf function from the C library
 
-    global _start               ; Entry point for the program
-
-_start:
+main:
+; _start:
     push dword name             ; Push the address of the name string
     push dword format           ; Push the address of the format string
     call printf                 ; Call the printf function

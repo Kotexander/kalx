@@ -36,29 +36,17 @@ fn run<E: Endian>() {
         Err(_) => println!("failed to write log file"),
     }
 
-    let mut vars_declared = VarTypes::new();
-    analyse_instruction(&instruction, &mut vars_declared);
+    let mut vars = Vars::new();
+    let mut strings = Strings::new();
+    analyse_instruction(&instruction, &mut vars, &mut strings);
 
     let mut text = Program::<E>::new();
 
     // setup stack
-    let mut vars_addrs = VarAddresses::new();
-    let mut alloc = 0;
-    for (id, typ) in vars_declared {
-        let var = match typ {
-            Type::String => Var::Global,
-            Type::U32 => {
-                alloc -= 4;
-                Var::Local(alloc)
-            }
-            Type::Bool => Var::Local(1),
-        };
-        vars_addrs.insert(id, var);
-    }
     text.mov_edp_esp();
-    text.sub_esp_imm8(alloc.unsigned_abs().try_into().unwrap());
+    text.sub_esp_imm8(vars.allocated().unsigned_abs().try_into().unwrap());
 
-    generate_instruction(&mut text, &instruction, &vars_addrs);
+    generate_instruction(&mut text, &instruction, &vars, &mut strings);
     text.mov_esp_edp();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
@@ -71,6 +59,20 @@ fn run<E: Endian>() {
     };
     let mut builder = ELFBuilder::new(elf_header);
     builder.sh.add(
+        ".rodata",
+        SectionHeader32 {
+            typ: SHType::ProgBits.into(),
+            flags: (SHFlag::Alloc).into(),
+            ..Default::default()
+        },
+        strings
+            .keys()
+            .iter()
+            .flat_map(|s| s.as_bytes_with_nul())
+            .copied()
+            .collect(),
+    );
+    let text_i = builder.sh.add(
         ".text",
         SectionHeader32 {
             typ: SHType::ProgBits.into(),
@@ -89,11 +91,30 @@ fn run<E: Endian>() {
             ..Default::default()
         },
     );
-    sym_table.add(
-        ".text",
-        SymbolEntry::<E> {
+    let symrodata_i = sym_table.add(
+        ".rodata",
+        SymbolEntry {
             info: SymbolEntry::<E>::info(SEBind::Local, SEType::Section),
             shndx: U16::new(1),
+            ..Default::default()
+        },
+    );
+    for (rel_str, addr) in strings.values_mut() {
+        sym_table.add(
+            &rel_str.sym,
+            SymbolEntry {
+                info: SymbolEntry::<E>::info(SEBind::Local, SEType::NoType),
+                shndx: U16::new(1),
+                value: (*addr).into(),
+                ..Default::default()
+            },
+        );
+    }
+    sym_table.add(
+        ".text",
+        SymbolEntry {
+            info: SymbolEntry::<E>::info(SEBind::Local, SEType::Section),
+            shndx: U16::new(2),
             ..Default::default()
         },
     );
@@ -102,22 +123,48 @@ fn run<E: Endian>() {
         "_start",
         SymbolEntry::<E> {
             info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
-            shndx: U16::new(1),
+            shndx: U16::new(2),
             ..Default::default()
         },
     );
-    let i = builder.sh.sections.len() as u32;
-    builder
+    let strtab_i = builder
         .sh
         .add(".strtab", sym_table.strtab.0, sym_table.strtab.1.bytes());
-    sym_table.symbolsh.link = i.into();
-    builder.sh.add(
+    sym_table.symbolsh.link = strtab_i.into();
+    let symtab_i = builder.sh.add(
         ".symtab",
         sym_table.symbolsh,
         sym_table
             .entries
             .iter()
             .flat_map(|e| e.bytes())
+            .copied()
+            .collect(),
+    );
+
+    let rel_entries: Vec<RelEntry<E>> = strings
+        .values()
+        .iter()
+        .flat_map(|(rel_str, _addr)| {
+            rel_str.rels.iter().map(|offset| RelEntry::<E> {
+                offset: (*offset).into(),
+                info: RelEntry::<E>::info(symrodata_i as u8, 1).into(),
+            })
+        })
+        .collect();
+
+    builder.sh.add(
+        ".rel.text",
+        SectionHeader32 {
+            typ: SHType::Rel.into(),
+            link: symtab_i.into(),
+            info: text_i.into(),
+            entsize: (std::mem::size_of::<RelEntry<E>>() as u32).into(),
+            ..Default::default()
+        },
+        rel_entries
+            .iter()
+            .flat_map(|re| re.bytes())
             .copied()
             .collect(),
     );

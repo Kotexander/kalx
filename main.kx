@@ -1,17 +1,35 @@
-// var hello = "Hello world!\n";
-// var bye = "Goodbye world!\n\n";
+var bye = "Goodbye world!\n\n";
+var hello = "Hello world!\n";
+
+var bye2 = bye;
+print(hello);
+print(bye);
+print(bye2);
+print("Hello world!\n");
+print("Hello world!\n");
+print("Hello world!\n");
+
 
 // loop {
-//   print hello;
-//   print bye;
 // }
 
-var x = 1;
-var y = 50;
+// var x = 1;
+// var y = 50;
 // var a = 1 > 10;
+// while x-20 < y-1 {
+    // x = x+1;
+// }
 
-while x < y {
-    x = x+1;
+
+var j = 0;
+var s = "hi     ";
+while j < 10 {
+    print(s);
+    print("loop\n");
+    j = j + 1;
 }
 
-exit x;
+print("last1\n");
+print("last2\n");
+
+exit(0);

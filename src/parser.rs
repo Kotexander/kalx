@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{ffi::CString, rc::Rc};
 
 use super::tokenizer::*;
 
@@ -14,8 +14,7 @@ pub enum Instruction {
         id: Rc<String>,
         value: Rc<Expression>,
     },
-    Exit(Rc<Expression>),
-    Print(Rc<Expression>),
+    Expr(Rc<Expression>),
     Binary {
         lhs: Rc<Self>,
         rhs: Rc<Self>,
@@ -29,12 +28,20 @@ pub enum Instruction {
 #[derive(Debug, Clone)]
 pub enum Expression {
     Number(u32),
-    String(Rc<String>),
+    String(Rc<CString>),
     Ident(Rc<String>),
     Operation {
         lhs: Rc<Expression>,
         op: Operation,
         rhs: Rc<Expression>,
+    },
+    Index {
+        expr: Rc<Expression>,
+        index: Rc<Expression>,
+    },
+    Function {
+        name: Rc<String>,
+        arg: Rc<Expression>,
     },
 }
 
@@ -94,6 +101,11 @@ impl Nodes {
     }
 }
 
+// use Expression::*;
+// use Instruction::*;
+// use Node::*;
+// use Token::*;
+// use AST::*;
 pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
     let mut tokenizer = Tokenizer::new(code).peekable();
 
@@ -106,7 +118,10 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
             let repeat = match &nodes.nodes[..] {
                 // string -> expr
                 [.., Node::Token(Token::String(string))] => {
-                    let node: AST = Rc::new(Expression::String(string.clone())).into();
+                    let node: AST = Rc::new(Expression::String(Rc::new(
+                        CString::new(string.as_bytes()).unwrap(),
+                    )))
+                    .into();
                     nodes.reduce(1);
                     nodes.push(node);
                     true
@@ -120,7 +135,7 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                 }
                 // ident -> expr
                 [.., Node::Token(Token::Ident(id))] => {
-                    if let Some(Token::Colon | Token::Equal) = tokenizer.peek() {
+                    if let Some(Token::Colon | Token::Equal | Token::POpen) = tokenizer.peek() {
                         false
                     } else {
                         let node: AST = Rc::new(Expression::Ident(id.clone())).into();
@@ -152,26 +167,48 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                         false
                     }
                 }
+                // expr[expr]
+                [.., Node::AST(AST::Expression(expr)), Node::Token(Token::SOpen), Node::AST(AST::Expression(index)), Node::Token(Token::BClose)] =>
+                {
+                    let node: AST = Rc::new(Expression::Index {
+                        expr: expr.clone(),
+                        index: index.clone(),
+                    })
+                    .into();
+                    nodes.reduce(4);
+                    nodes.push(node);
+                    true
+                }
+                // exit(expr) -> expr
+                [.., Node::Token(Token::Exit), Node::Token(Token::POpen), Node::AST(AST::Expression(expr)), Node::Token(Token::PClose)] =>
+                {
+                    // let node: AST = Rc::new(Instruction::Exit(expr.clone())).into();
+                    let node: AST = Rc::new(Expression::Function {
+                        name: Rc::new(String::from("exit")),
+                        arg: expr.clone(),
+                    })
+                    .into();
+                    nodes.reduce(4);
+                    nodes.push(node);
+                    true
+                }
+                // print(expr) -> expr
+                [.., Node::Token(Token::Print), Node::Token(Token::POpen), Node::AST(AST::Expression(expr)), Node::Token(Token::PClose)] =>
+                {
+                    // let node: AST = Rc::new(Instruction::Print(expr.clone())).into();
+                    let node: AST = Rc::new(Expression::Function {
+                        name: Rc::new(String::from("print")),
+                        arg: expr.clone(),
+                    })
+                    .into();
+                    nodes.reduce(4);
+                    nodes.push(node);
+                    true
+                }
                 // (expr) -> expr
                 [.., Node::Token(Token::POpen), Node::AST(AST::Expression(expr)), Node::Token(Token::PClose)] =>
                 {
                     let node: AST = expr.clone().into();
-                    nodes.reduce(3);
-                    nodes.push(node);
-                    true
-                }
-                // exit
-                [.., Node::Token(Token::Exit), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
-                {
-                    let node: AST = Rc::new(Instruction::Exit(expr.clone())).into();
-                    nodes.reduce(3);
-                    nodes.push(node);
-                    true
-                }
-                // print
-                [.., Node::Token(Token::Print), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
-                {
-                    let node: AST = Rc::new(Instruction::Print(expr.clone())).into();
                     nodes.reduce(3);
                     nodes.push(node);
                     true
@@ -188,7 +225,7 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                     nodes.push(node);
                     true
                 }
-                // Assign
+                // assign
                 [.., Node::Token(Token::Ident(id)), Node::Token(Token::Equal), Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] =>
                 {
                     let node: AST = Rc::new(Instruction::Assign {
@@ -241,6 +278,14 @@ pub fn parse(code: &str) -> Result<Rc<Instruction>, String> {
                 // loop
                 [.., Node::Token(Token::Loop), Node::AST(AST::Block(block))] => {
                     let node: AST = Rc::new(Instruction::Loop(block.clone())).into();
+                    nodes.reduce(2);
+                    nodes.push(node);
+                    true
+                }
+
+                // expr;
+                [.., Node::AST(AST::Expression(expr)), Node::Token(Token::Semicolon)] => {
+                    let node: AST = Rc::new(Instruction::Expr(expr.clone())).into();
                     nodes.reduce(2);
                     nodes.push(node);
                     true

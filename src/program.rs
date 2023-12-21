@@ -55,10 +55,24 @@ impl<E: Endian> Program<E> {
             phantom: PhantomData,
         }
     }
-    pub fn mov_rm8_imm(&mut self, rm: RM32, disp: i8, imm: u32) {
+
+    pub fn imm32(&mut self, imm: u32) {
+        self.code.extend_from_slice(&E::u32_bytes(imm));
+    }
+
+    fn replace_u32(&mut self, addr: u32, imm: u32) {
+        let bytes = E::u32_bytes(imm);
+        for (i, b) in bytes.into_iter().enumerate() {
+            self.code[addr as usize + i] = b;
+        }
+    }
+
+    pub fn mov_rm8_imm(&mut self, rm: RM32, disp: i8, imm: u32) -> u32 {
         let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::EAX);
-        self.code.extend_from_slice(&[0xC7, modrm32, disp as u8]);
+        self.code.extend_from_slice(&[0x81, modrm32, disp as u8]);
+        let rel = self.code.len() as u32;
         self.imm32(imm);
+        rel
     }
     pub fn mov_rm8_r(&mut self, rm: RM32, reg: Reg32, disp: i8) {
         let modrm32 = modrm32(Mod32::Disp08, rm, reg);
@@ -67,6 +81,46 @@ impl<E: Endian> Program<E> {
     pub fn mov_r_rm8(&mut self, reg: Reg32, rm: RM32, disp: i8) {
         let modrm32 = modrm32(Mod32::Disp08, rm, reg);
         self.code.extend_from_slice(&[0x8B, modrm32, disp as u8]);
+    }
+
+    pub fn mov_eax_imm(&mut self, imm: u32) -> u32 {
+        self.code.push(0xB8);
+        let rel = self.code.len() as u32;
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_ebx_imm(&mut self, imm: u32) -> u32 {
+        self.code.push(0xBB);
+        let rel = self.code.len() as u32;
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_ecx_imm(&mut self, imm: u32) -> u32 {
+        self.code.push(0xB9);
+        let rel = self.code.len() as u32;
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_edx_imm(&mut self, imm: u32) -> u32 {
+        self.code.push(0xBA);
+        let rel = self.code.len() as u32;
+        self.imm32(imm);
+        rel
+    }
+
+    /// used to sace the stack
+    pub fn mov_edp_esp(&mut self) {
+        self.code.extend_from_slice(&[
+            0x89, // move
+            0xE5, // esp -> ebp
+        ]);
+    }
+    /// used to restore the stack
+    pub fn mov_esp_edp(&mut self) {
+        self.code.extend_from_slice(&[
+            0x89, // move
+            0xEC, // ebp -> esp
+        ]);
     }
 
     pub fn add_eax_imm(&mut self, imm: u32) {
@@ -106,21 +160,6 @@ impl<E: Endian> Program<E> {
         self.imm32(imm);
     }
 
-    /// used to sace the stack
-    pub fn mov_edp_esp(&mut self) {
-        self.code.extend_from_slice(&[
-            0x89, // move
-            0xE5, // esp -> ebp
-        ]);
-    }
-    /// used to restore the stack
-    pub fn mov_esp_edp(&mut self) {
-        self.code.extend_from_slice(&[
-            0x89, // move
-            0xEC, // ebp -> esp
-        ]);
-    }
-
     pub fn sub_esp_imm8(&mut self, imm: u8) {
         self.code.extend_from_slice(&[
             0x83, // sub
@@ -128,9 +167,7 @@ impl<E: Endian> Program<E> {
             imm,
         ]);
     }
-    pub fn imm32(&mut self, imm: u32) {
-        self.code.extend_from_slice(&E::u32_bytes(imm));
-    }
+
     pub fn string(&mut self, string: &CStr) {
         self.code.extend_from_slice(string.to_bytes_with_nul());
     }
@@ -143,28 +180,12 @@ impl<E: Endian> Program<E> {
     pub fn jg(&mut self, rel: i8) {
         self.code.extend_from_slice(&[0x7f, rel as u8]);
     }
-    pub fn loop_fn<F: Fn(&mut Program<E>)>(&mut self, f: F) {
+    pub fn loop_fn<F: FnMut(&mut Program<E>)>(&mut self, mut f: F) {
         let start = self.code.len();
         f(self);
         self.jmp_rel(0);
         let end = self.code.len();
         self.code[end - 1] = (start as i32 - end as i32) as u8;
-    }
-    pub fn mov_eax_imm(&mut self, imm: u32) {
-        self.code.push(0xB8);
-        self.imm32(imm);
-    }
-    pub fn mov_ebx_imm(&mut self, imm: u32) {
-        self.code.push(0xBB);
-        self.imm32(imm);
-    }
-    pub fn mov_ecx_imm(&mut self, imm: u32) {
-        self.code.push(0xB9);
-        self.imm32(imm);
-    }
-    pub fn mov_edx_imm(&mut self, imm: u32) {
-        self.code.push(0xBA);
-        self.imm32(imm);
     }
 
     pub fn cmp_r_rm(&mut self, reg: Reg32, rm: RM32) {
@@ -179,9 +200,20 @@ impl<E: Endian> Program<E> {
         self.mov_eax_imm(0x01); // exit
         self.syscall();
     }
-    pub fn write(&mut self, addr: u32, size: u32) {
+
+    /// returns a relocation address
+    pub fn write_const(&mut self, addr: u32, size: u32) -> u32 {
         self.mov_ebx_imm(0x01); // stdout
-        self.mov_ecx_imm(addr); // buf
+        let rel = self.mov_ecx_imm(addr); // buf
+        self.mov_edx_imm(size); // size
+        self.mov_eax_imm(0x04); // write
+        self.syscall();
+        rel
+    }
+
+    pub fn write_rm8(&mut self, rm: RM32, disp: i8, size: u32) {
+        self.mov_ebx_imm(0x01); // stdout
+        self.mov_r_rm8(Reg32::ECX, rm, disp);
         self.mov_edx_imm(size); // size
         self.mov_eax_imm(0x04); // write
         self.syscall();

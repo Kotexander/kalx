@@ -172,6 +172,19 @@ impl<E: Endian> Default for SymbolEntry<E> {
 }
 unsafe impl<E: Endian> Pod for SymbolEntry<E> {}
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RelEntry<E: Endian> {
+    pub offset: U32<E>,
+    pub info: U32<E>,
+}
+impl<E: Endian> RelEntry<E> {
+    pub fn info(sym: u8, typ: u8) -> u32 {
+        ((sym as u32) << 8) + (typ as u32)
+    }
+}
+unsafe impl<E: Endian> Pod for RelEntry<E> {}
+
 pub struct ELFStrings {
     strings: Vec<u8>,
 }
@@ -221,10 +234,12 @@ impl<E: Endian> SymbolTable<E> {
             entries,
         }
     }
-    pub fn add(&mut self, name: &str, mut entry: SymbolEntry<E>) {
-        let i = self.strtab.1.add_str(name).unwrap();
-        entry.name = i.into();
+    pub fn add(&mut self, name: &str, mut entry: SymbolEntry<E>) -> u32 {
+        let i = self.entries.len() as u32;
+        let j = self.strtab.1.add_str(name).unwrap();
+        entry.name = j.into();
         self.entries.push(entry);
+        i
     }
     pub fn set_info(&mut self) {
         let info = self.entries.len() as u32;
@@ -251,10 +266,12 @@ impl<E: Endian> SectionHeaders<E> {
             shstrtab: (shstrtab, strings),
         }
     }
-    pub fn add(&mut self, name: &str, mut header: SectionHeader32<E>, data: Vec<u8>) {
-        let i = self.shstrtab.1.add_str(name).unwrap();
-        header.name = i.into();
+    pub fn add(&mut self, name: &str, mut header: SectionHeader32<E>, data: Vec<u8>) -> u32 {
+        let i = self.sections.len() as u32;
+        let j = self.shstrtab.1.add_str(name).unwrap();
+        header.name = j.into();
         self.sections.push((header, data));
+        i
     }
     pub fn update(&mut self, initial_offset: u32) {
         let mut offset = (std::mem::size_of::<SectionHeader32<E>>() * (self.sections.len() + 1))
