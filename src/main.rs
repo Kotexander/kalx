@@ -1,6 +1,6 @@
 mod elf;
 
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, process::exit, rc::Rc};
 
 use elf::*;
 
@@ -9,10 +9,12 @@ use program::*;
 
 mod tokenizer;
 
+use tokenizer::*;
 mod parser;
 use parser::*;
-use tokenizer::*;
 
+mod analyser;
+use analyser::*;
 mod code_generator;
 use code_generator::*;
 
@@ -21,11 +23,11 @@ fn run<E: Endian>() -> Result<(), String> {
     let _ = std::fs::remove_file("output/main");
     let code = std::fs::read_to_string("main.kx").unwrap();
 
-    let instruction = parse(&code)?;
+    let block = parse(&code)?;
 
     let mut vars = Vars::new();
     let mut strings = Strings::new();
-    analyse_instruction(&instruction, &mut vars, &mut strings)?;
+    analyse_block(&block, &mut vars, &mut strings)?;
 
     let mut text = Program::<E>::new();
 
@@ -33,7 +35,7 @@ fn run<E: Endian>() -> Result<(), String> {
     text.mov_edp_esp();
     text.sub_esp_imm8(vars.allocated().unsigned_abs().try_into().unwrap());
 
-    generate_instruction(&mut text, &instruction, &vars, &mut strings);
+    generate_block(&mut text, &block, &vars, &mut strings);
     text.mov_esp_edp();
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
@@ -78,7 +80,7 @@ fn run<E: Endian>() -> Result<(), String> {
             ..Default::default()
         },
     );
-    let symrodata_i = sym_table.add(
+    sym_table.add(
         ".rodata",
         SymbolEntry {
             info: SymbolEntry::<E>::info(SEBind::Local, SEType::Section),
@@ -87,7 +89,7 @@ fn run<E: Endian>() -> Result<(), String> {
         },
     );
     for (rel_str, addr) in strings.values_mut() {
-        sym_table.add(
+        rel_str.sym_index = sym_table.add(
             &rel_str.sym,
             SymbolEntry {
                 info: SymbolEntry::<E>::info(SEBind::Local, SEType::NoType),
@@ -107,13 +109,22 @@ fn run<E: Endian>() -> Result<(), String> {
     );
     sym_table.set_info();
     sym_table.add(
-        "_start",
+        "main",
         SymbolEntry::<E> {
             info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
             shndx: U16::new(2),
             ..Default::default()
         },
     );
+    sym_table.add(
+        "printf",
+        SymbolEntry::<E> {
+            info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
+            shndx: U16::new(0),
+            ..Default::default()
+        },
+    );
+
     let strtab_i = builder
         .sh
         .add(".strtab", sym_table.strtab.0, sym_table.strtab.1.bytes());
@@ -135,7 +146,7 @@ fn run<E: Endian>() -> Result<(), String> {
         .flat_map(|(rel_str, _addr)| {
             rel_str.rels.iter().map(|offset| RelEntry::<E> {
                 offset: (*offset).into(),
-                info: RelEntry::<E>::info(symrodata_i as u8, 1).into(),
+                info: RelEntry::<E>::info(rel_str.sym_index as u8, 1).into(),
             })
         })
         .collect();
@@ -176,6 +187,9 @@ fn write(bytes: &[u8]) {
 fn main() {
     match run::<LittleEndian>() {
         Ok(_) => println!("Build successfull!\n\n"),
-        Err(e) => println!("Build failed: {e}\n\n"),
+        Err(e) => {
+            println!("Build failed: {e}\n\n");
+            exit(1);
+        }
     }
 }

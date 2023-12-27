@@ -28,6 +28,8 @@ pub trait Endian {
         }
     }
 }
+/// # Safety
+/// Only safe for pure data structers
 pub unsafe trait Pod: Sized {
     fn bytes(&self) -> &[u8] {
         unsafe {

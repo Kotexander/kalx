@@ -5,6 +5,7 @@ pub enum Type {
     String,
     U32,
     Bool,
+    Void
 }
 impl Type {
     pub fn parse(typ: &str) -> Option<Self> {
@@ -12,6 +13,7 @@ impl Type {
             "u32" => Self::U32,
             "str" => Self::String,
             "bool" => Self::Bool,
+            "void" => Self::Void,
             _ => {
                 return None;
             }
@@ -25,6 +27,7 @@ impl Display for Type {
             Type::String => "str",
             Type::U32 => "u32",
             Type::Bool => "bool",
+            Type::Void => "void",
         };
         write!(f, "{s}")
     }
@@ -67,8 +70,6 @@ impl Operation {
 #[derive(Debug, Clone)]
 pub enum Token {
     Var,
-    Exit,
-    Print,
     Loop,
     While,
     Ident(Rc<String>),
@@ -87,14 +88,13 @@ pub enum Token {
     PClose,
     SOpen,
     SClose,
+    Comma,
 }
 impl Token {
     /// doesn't do symbols
     fn parse(token: String) -> Self {
         let token = match token.as_str() {
-            "exit" => Self::Exit,
             "var" => Self::Var,
-            "print" => Self::Print,
             "loop" => Self::Loop,
             "while" => Self::While,
             "true" => Self::Bool(true),
@@ -138,6 +138,7 @@ impl Token {
             '/' => Token::Operation(Operation::Div),
             '>' => Token::Operation(Operation::GTC),
             '<' => Token::Operation(Operation::LTC),
+            ',' => Token::Comma,
             _ => {
                 return None;
             }
