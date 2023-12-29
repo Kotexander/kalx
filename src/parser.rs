@@ -209,9 +209,7 @@ pub fn parse(code: &str) -> Result<Block, String> {
         nodes.push(token);
 
         loop {
-            let repeat = if parse_function(&mut nodes) {
-                true
-            } else if parse_block(&mut nodes) {
+            let repeat = if parse_function(&mut nodes) || parse_block(&mut nodes) {
                 true
             } else {
                 match &nodes.0[..] {

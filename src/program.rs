@@ -167,6 +167,13 @@ impl<E: Endian> Program<E> {
             imm,
         ]);
     }
+    pub fn add_esp_imm8(&mut self, imm: u8) {
+        self.code.extend_from_slice(&[
+            0x83, // sub
+            0xC4, // esp
+            imm,
+        ]);
+    }
 
     pub fn string(&mut self, string: &CStr) {
         self.code.extend_from_slice(string.to_bytes_with_nul());
@@ -191,6 +198,16 @@ impl<E: Endian> Program<E> {
     pub fn cmp_r_rm(&mut self, reg: Reg32, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code.extend_from_slice(&[0x3B, modrm32])
+    }
+
+    pub fn push_eax(&mut self) {
+        self.code.push(0x50);
+    }
+    pub fn call_rel32(&mut self, rel: i32) -> u32 {
+        self.code.push(0xE8);
+        let r = self.code.len() as u32;
+        self.imm32(rel as u32);
+        r
     }
 
     pub fn syscall(&mut self) {

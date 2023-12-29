@@ -15,8 +15,49 @@ use parser::*;
 
 mod analyser;
 use analyser::*;
-mod code_generator;
-use code_generator::*;
+mod generator;
+use generator::*;
+
+struct ProcessedStrSymbol {
+    name: String,
+    index: u32,
+    rels: Vec<u32>,
+}
+struct ProcessedStrs {
+    data: Vec<u8>,
+    symbols: Vec<ProcessedStrSymbol>
+}
+fn process_strs(strs: Strings) -> ProcessedStrs {
+    let data = strs
+        .0
+        .iter()
+        .flat_map(|(s, _)| s.as_bytes_with_nul())
+        .copied()
+        .collect();
+
+    let mut index = 0;
+    let symbols: Vec<_> = strs
+        .0
+        .into_iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let name = format!("str{i}");
+            let idx = index;
+            let rels = s.1;
+            index += s.0.as_bytes_with_nul().len() as u32;
+            ProcessedStrSymbol {
+                name,
+                index: idx,
+                rels,
+            }
+        })
+        .collect();
+
+    ProcessedStrs {
+        data,
+        symbols,
+    }
+}
 
 fn run<E: Endian>() -> Result<(), String> {
     let _ = std::fs::remove_file("output/main.o");
@@ -25,18 +66,20 @@ fn run<E: Endian>() -> Result<(), String> {
 
     let block = parse(&code)?;
 
-    let mut vars = Vars::new();
-    let mut strings = Strings::new();
-    analyse_block(&block, &mut vars, &mut strings)?;
+    let info = analyse(&block)?;
+    let (allocated, vars) = generate_info(info);
 
     let mut text = Program::<E>::new();
 
     // setup stack
     text.mov_edp_esp();
-    text.sub_esp_imm8(vars.allocated().unsigned_abs().try_into().unwrap());
+    text.sub_esp_imm8(allocated.unsigned_abs().try_into().unwrap());
 
-    generate_block(&mut text, &block, &vars, &mut strings);
+    let mut rel_info = RelInfo::new();
+    generate_block(&mut text, &block, &vars, &mut rel_info);
     text.mov_esp_edp();
+
+    let processed_strs = process_strs(rel_info.strs);
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
     let elf_header = ELFHeader32::<E> {
@@ -54,12 +97,7 @@ fn run<E: Endian>() -> Result<(), String> {
             flags: (SHFlag::Alloc).into(),
             ..Default::default()
         },
-        strings
-            .keys()
-            .iter()
-            .flat_map(|s| s.as_bytes_with_nul())
-            .copied()
-            .collect(),
+        processed_strs.data,
     );
     let text_i = builder.sh.add(
         ".text",
@@ -88,17 +126,24 @@ fn run<E: Endian>() -> Result<(), String> {
             ..Default::default()
         },
     );
-    for (rel_str, addr) in strings.values_mut() {
-        rel_str.sym_index = sym_table.add(
-            &rel_str.sym,
-            SymbolEntry {
-                info: SymbolEntry::<E>::info(SEBind::Local, SEType::NoType),
-                shndx: U16::new(1),
-                value: (*addr).into(),
-                ..Default::default()
-            },
-        );
-    }
+
+    let str_rels: Vec<_> = processed_strs.symbols
+        .into_iter()
+        .map(|sym| {
+            let i = sym_table.add(
+                &sym.name,
+                SymbolEntry {
+                    info: SymbolEntry::<E>::info(SEBind::Local, SEType::NoType),
+                    shndx: U16::new(1),
+                    value: sym.index.into(),
+                    ..Default::default()
+                },
+            );
+
+            (i, sym.rels)
+        })
+        .collect();
+
     sym_table.add(
         ".text",
         SymbolEntry {
@@ -107,6 +152,8 @@ fn run<E: Endian>() -> Result<(), String> {
             ..Default::default()
         },
     );
+
+    // start of global symbols
     sym_table.set_info();
     sym_table.add(
         "main",
@@ -116,14 +163,30 @@ fn run<E: Endian>() -> Result<(), String> {
             ..Default::default()
         },
     );
-    sym_table.add(
-        "printf",
-        SymbolEntry::<E> {
-            info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
-            shndx: U16::new(0),
-            ..Default::default()
-        },
-    );
+    let fun_rel: Vec<_> = rel_info
+        .funs
+        .0
+        .into_iter()
+        .map(|(name, rels)| {
+            let i = sym_table.add(
+                &name,
+                SymbolEntry::<E> {
+                    info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
+                    shndx: U16::new(0),
+                    ..Default::default()
+                },
+            );
+            (i, rels)
+        })
+        .collect();
+    // sym_table.add(
+    //     "printf",
+    //     SymbolEntry::<E> {
+    //         info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
+    //         shndx: U16::new(0),
+    //         ..Default::default()
+    //     },
+    // );
 
     let strtab_i = builder
         .sh
@@ -140,15 +203,21 @@ fn run<E: Endian>() -> Result<(), String> {
             .collect(),
     );
 
-    let rel_entries: Vec<RelEntry<E>> = strings
-        .values()
-        .iter()
-        .flat_map(|(rel_str, _addr)| {
-            rel_str.rels.iter().map(|offset| RelEntry::<E> {
-                offset: (*offset).into(),
-                info: RelEntry::<E>::info(rel_str.sym_index as u8, 1).into(),
+    let rel_entries: Vec<RelEntry<E>> = str_rels
+        .into_iter()
+        .flat_map(|(index, rels)| {
+            rels.into_iter().map(move |offset| RelEntry::<E> {
+                offset: offset.into(),
+                info: RelEntry::<E>::info(index as u8, 1).into(),
             })
-        })
+        }).chain(
+            fun_rel.into_iter().flat_map(|(index, rels)| {
+                rels.into_iter().map(move |offset| RelEntry::<E> {
+                    offset: offset.into(),
+                    info: RelEntry::<E>::info(index as u8, 2).into(),
+                })       
+            })
+        )
         .collect();
 
     builder.sh.add(

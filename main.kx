@@ -24,18 +24,16 @@
     // var g = "f" + 32;
 
     var j = 0;
-    var s = "hi";
+    var s = "hi ";
     while j < 10 {
-        // print(s);
-        // print("loop\n");
-        // print(s);
-        // print("loop\n");
+        printf(s);
+        printf("loop %i, const %i\n", j, 23 + 23 + 23);
         j = j + 1;
     }
 
 
-    // print("last1\n");
-    // print("last2\n");
+    printf("last1\n");
+    printf("last2 %s\n", bye);
 
-    exit(0);
+    exit(1);
 }
