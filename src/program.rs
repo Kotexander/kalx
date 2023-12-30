@@ -70,7 +70,7 @@ impl<E: Endian> Program<E> {
     pub fn mov_rm8_imm(&mut self, rm: RM32, disp: i8, imm: u32) -> u32 {
         let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::EAX);
         self.code.extend_from_slice(&[0x81, modrm32, disp as u8]);
-        let rel = self.code.len() as u32;
+        let rel = self.addr();
         self.imm32(imm);
         rel
     }
@@ -85,25 +85,25 @@ impl<E: Endian> Program<E> {
 
     pub fn mov_eax_imm(&mut self, imm: u32) -> u32 {
         self.code.push(0xB8);
-        let rel = self.code.len() as u32;
+        let rel = self.addr();
         self.imm32(imm);
         rel
     }
     pub fn mov_ebx_imm(&mut self, imm: u32) -> u32 {
         self.code.push(0xBB);
-        let rel = self.code.len() as u32;
+        let rel = self.addr();
         self.imm32(imm);
         rel
     }
     pub fn mov_ecx_imm(&mut self, imm: u32) -> u32 {
         self.code.push(0xB9);
-        let rel = self.code.len() as u32;
+        let rel = self.addr();
         self.imm32(imm);
         rel
     }
     pub fn mov_edx_imm(&mut self, imm: u32) -> u32 {
         self.code.push(0xBA);
-        let rel = self.code.len() as u32;
+        let rel = self.addr();
         self.imm32(imm);
         rel
     }
@@ -178,14 +178,35 @@ impl<E: Endian> Program<E> {
     pub fn string(&mut self, string: &CStr) {
         self.code.extend_from_slice(string.to_bytes_with_nul());
     }
-    pub fn jmp_rel(&mut self, rel: i8) {
-        self.code.extend_from_slice(&[0xEB, rel as u8]);
+    pub fn jmp_rel(&mut self, rel: i8) -> u32 {
+        self.code.push(0xEB);
+        let rel = self.addr();
+        self.code.push(rel as u8);
+        rel
     }
-    pub fn jl(&mut self, rel: i8) {
-        self.code.extend_from_slice(&[0x7C, rel as u8]);
+    pub fn jl(&mut self, rel: i8) -> u32 {
+        self.code.push(0x7C);
+        let rel = self.addr();
+        self.code.push(rel as u8);
+        rel
     }
-    pub fn jg(&mut self, rel: i8) {
-        self.code.extend_from_slice(&[0x7f, rel as u8]);
+    pub fn jg(&mut self, rel: i8) -> u32 {
+        self.code.push(0x7F);
+        let rel = self.addr();
+        self.code.push(rel as u8);
+        rel
+    }
+    pub fn jle(&mut self, rel: i8) -> u32 {
+        self.code.push(0x7E);
+        let rel = self.addr();
+        self.code.push(rel as u8);
+        rel
+    }
+    pub fn jge(&mut self, rel: i8) -> u32 {
+        self.code.push(0x7D);
+        let rel = self.addr();
+        self.code.push(rel as u8);
+        rel
     }
     pub fn loop_fn<F: FnMut(&mut Program<E>)>(&mut self, mut f: F) {
         let start = self.code.len();
@@ -205,7 +226,7 @@ impl<E: Endian> Program<E> {
     }
     pub fn call_rel32(&mut self, rel: i32) -> u32 {
         self.code.push(0xE8);
-        let r = self.code.len() as u32;
+        let r = self.addr();
         self.imm32(rel as u32);
         r
     }
@@ -234,5 +255,9 @@ impl<E: Endian> Program<E> {
         self.mov_edx_imm(size); // size
         self.mov_eax_imm(0x04); // write
         self.syscall();
+    }
+
+    pub fn addr(&self) -> u32 {
+        self.code.len() as u32
     }
 }

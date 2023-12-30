@@ -5,7 +5,7 @@ pub enum Type {
     String,
     U32,
     Bool,
-    Void
+    Void,
 }
 impl Type {
     pub fn parse(typ: &str) -> Option<Self> {
@@ -33,11 +33,17 @@ impl Display for Type {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum Operation {
     GTC,
     LTC,
+    GTE,
+    LTE,
+    And,
+    Or_,
+    BND,
+    BOR,
     Add,
     Sub,
     Mul,
@@ -45,14 +51,11 @@ pub enum Operation {
 }
 impl Display for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Operation::GTC => ">",
-            Operation::LTC => "<",
-            Operation::Add => "+",
-            Operation::Sub => "-",
-            Operation::Mul => "*",
-            Operation::Div => "/",
-        };
+        let s = Self::MAPPING
+            .iter()
+            .find_map(|(s, op)| if *self == *op { Some(s) } else { None })
+            .unwrap();
+
         write!(f, "{s}")
     }
 }
@@ -60,11 +63,53 @@ impl Display for Operation {
 impl Operation {
     pub fn precedence(self) -> i32 {
         match self {
-            Operation::GTC | Operation::LTC => 0,
+            Operation::GTC
+            | Operation::LTC
+            | Operation::GTE
+            | Operation::LTE
+            | Operation::And
+            | Operation::Or_ => 0,
             Operation::Add | Operation::Sub => 1,
             Operation::Mul | Operation::Div => 2,
+            Operation::BND | Operation::BOR => 3,
         }
     }
+    pub fn can_be_operator(c: char) -> bool {
+        Self::MAPPING.iter().any(|(s, _)| s.starts_with(c))
+    }
+    /// parse with peek
+    pub fn parse(op: &str) -> Option<Self> {
+        Self::MAPPING
+            .iter()
+            .find_map(|(s, o)| if *s == op { Some(*o) } else { None })
+    }
+
+    pub fn is_comparator(&self) -> bool {
+        matches!(
+            self,
+            Operation::GTC
+                | Operation::LTC
+                | Operation::GTE
+                | Operation::LTE
+                | Operation::And
+                | Operation::Or_
+        )
+    }
+
+    const MAPPING: &'static [(&'static str, Self)] = &[
+        (">=", Self::GTE),
+        ("<=", Self::LTE),
+        ("&&", Self::And),
+        ("||", Self::Or_),
+        ("+", Self::Add),
+        ("-", Self::Sub),
+        ("*", Self::Mul),
+        ("/", Self::Div),
+        (">", Self::GTC),
+        ("<", Self::LTC),
+        ("&", Self::BND),
+        ("|", Self::BOR),
+    ];
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +123,8 @@ pub enum Token {
     Bool(bool),
     Type(Type),
     Operation(Operation),
+    If,
+    Else,
     // symbols
     Semicolon,
     Colon,
@@ -99,6 +146,8 @@ impl Token {
             "while" => Self::While,
             "true" => Self::Bool(true),
             "false" => Self::Bool(false),
+            "if" => Self::If,
+            "else" => Self::Else,
             _ => {
                 // string
                 if token.starts_with('"') && token.ends_with('"') {
@@ -132,12 +181,6 @@ impl Token {
             ')' => Token::PClose,
             '[' => Token::SOpen,
             ']' => Token::SClose,
-            '+' => Token::Operation(Operation::Add),
-            '-' => Token::Operation(Operation::Sub),
-            '*' => Token::Operation(Operation::Mul),
-            '/' => Token::Operation(Operation::Div),
-            '>' => Token::Operation(Operation::GTC),
-            '<' => Token::Operation(Operation::LTC),
             ',' => Token::Comma,
             _ => {
                 return None;
@@ -201,12 +244,28 @@ impl<'a> Iterator for Tokenizer<'a> {
         if sym.is_some() {
             return sym;
         }
+        // try 2 char op
+        if self.code_chars.peek().is_some() {
+            if let Some(op) = Operation::parse(&self.code[start..=(start + 1)]) {
+                self.code_chars.next();
+                return Some(Token::Operation(op));
+            }
+        }
+        // try 1 char op
+        if let Some(op) = Operation::parse(&self.code[start..=start]) {
+            return Some(Token::Operation(op));
+        }
+
         let mut end = start;
 
         let is_string = c == '"';
 
         while let Some((_i, c)) = self.code_chars.peek() {
-            if !is_string && (c.is_whitespace() || Token::symbol(*c).is_some()) {
+            if !is_string
+                && (c.is_whitespace()
+                    || Token::symbol(*c).is_some()
+                    || Operation::can_be_operator(*c))
+            {
                 break;
             }
             let (i, c) = self.code_chars.next().unwrap();

@@ -9,9 +9,7 @@ impl Strings {
         Self(vec![])
     }
     pub fn contains(&self, string: &Rc<CString>) -> bool {
-        self.0
-        .iter()
-        .any(|(s, _)| *s == *string)
+        self.0.iter().any(|(s, _)| *s == *string)
     }
     pub fn add_str(&mut self, string: &Rc<CString>) {
         if !self.contains(string) {
@@ -38,9 +36,7 @@ impl Functions {
         Self(vec![])
     }
     pub fn contains(&self, function: &Rc<String>) -> bool {
-        self.0
-        .iter()
-        .any(|(f, _)| *f == *function)
+        self.0.iter().any(|(f, _)| *f == *function)
     }
     pub fn add_fun(&mut self, function: &Rc<String>) {
         if !self.contains(function) {
@@ -212,6 +208,12 @@ pub fn generate_expr<E: Endian>(
                     Operation::Div => todo!(),
                     Operation::GTC => todo!(),
                     Operation::LTC => todo!(),
+                    Operation::GTE => todo!(),
+                    Operation::LTE => todo!(),
+                    Operation::And => todo!(),
+                    Operation::Or_ => todo!(),
+                    Operation::BND => todo!(),
+                    Operation::BOR => todo!(),
                 }
             }
             Intent::Add => {
@@ -227,6 +229,12 @@ pub fn generate_expr<E: Endian>(
                     Operation::Div => todo!(),
                     Operation::GTC => todo!(),
                     Operation::LTC => todo!(),
+                    Operation::GTE => todo!(),
+                    Operation::LTE => todo!(),
+                    Operation::And => todo!(),
+                    Operation::Or_ => todo!(),
+                    Operation::BND => todo!(),
+                    Operation::BOR => todo!(),
                 }
             }
             Intent::Sub => {
@@ -242,13 +250,20 @@ pub fn generate_expr<E: Endian>(
                     Operation::Div => todo!(),
                     Operation::GTC => todo!(),
                     Operation::LTC => todo!(),
+                    Operation::GTE => todo!(),
+                    Operation::LTE => todo!(),
+                    Operation::And => todo!(),
+                    Operation::Or_ => todo!(),
+                    Operation::BND => todo!(),
+                    Operation::BOR => todo!(),
                 }
             }
         },
         Expression::Index { expr: _, index: _ } => todo!(),
         Expression::Function { name, args } => {
             match &name[..] {
-                "exit" => { // inline
+                "exit" => {
+                    // inline
                     generate_expr(
                         program,
                         Intent::Load,
@@ -259,41 +274,13 @@ pub fn generate_expr<E: Endian>(
                     );
                     program.exit();
                 }
-                // "print" => {
-                //     match &*(args[0]) {
-                //         Expression::String(string) => {
-                //             let (rel_str, _addr) = strings.get_mut(string).unwrap();
-                //             let rel =
-                //                 program.write_const(0, string.as_bytes_with_nul().len() as u32);
-                //             rel_str.add(rel);
-                //         }
-                //         Expression::Ident(id) => {
-                //             let (typ, addr) = vars.get(id).unwrap();
-                //             if let Type::String = typ {
-                //                 // program.write_const(0, 1);
-                //                 program.write_rm8(RM32::EBP, (*addr).try_into().unwrap(), 5);
-                //                 // todo!()
-                //             } else {
-                //                 todo!()
-                //             }
-                //         }
-                //         Expression::Number(_) => todo!(),
-                //         Expression::Operation {
-                //             lhs: _,
-                //             op: _,
-                //             rhs: _,
-                //         } => todo!(),
-                //         Expression::Index { expr: _, index: _ } => todo!(),
-                //         Expression::Function { name: _, args: _ } => todo!(),
-                //     }
-                // }
                 _ => {
                     // TODO: account for size
                     let mut stack = 0;
                     for arg in args.iter().rev() {
                         generate_expr(program, Intent::Load, Register::EAX, arg, vars, rel_info);
                         program.push_eax();
-                        stack += 4; 
+                        stack += 4;
                     }
                     let rel = program.call_rel32(-4);
                     rel_info.funs.add_rel(name, rel);
@@ -348,7 +335,7 @@ pub fn generate_instruction<E: Endian>(
             });
         }
         Instruction::While { expr, block } => {
-            program.jmp_rel(0);
+            let addr_start = program.jmp_rel(0);
             let start = program.code.len();
             // body
             for instruction in block.iter() {
@@ -356,7 +343,7 @@ pub fn generate_instruction<E: Endian>(
             }
             let first_jmp_end = program.code.len();
             let rel: i8 = (first_jmp_end as i32 - start as i32).try_into().unwrap();
-            program.code[start - 1] = rel as u8;
+            program.code[addr_start as usize] = rel as u8;
             // cmp
             match &**expr {
                 Expression::Operation { lhs, op, rhs } => {
@@ -365,21 +352,23 @@ pub fn generate_instruction<E: Endian>(
                     generate_expr(program, Intent::Load, r_lhs, lhs, vars, rel_info);
                     generate_expr(program, Intent::Load, r_rhs, rhs, vars, rel_info);
                     program.cmp_r_rm(r_lhs.into(), r_rhs.into());
-                    match op {
-                        Operation::GTC => {
-                            program.jg(0);
-                        }
-                        Operation::LTC => {
-                            program.jl(0);
-                        }
+                    let jmp_rel = match op {
+                        Operation::GTC => program.jg(0),
+                        Operation::LTC => program.jl(0),
+                        Operation::GTE => program.jge(0),
+                        Operation::LTE => program.jle(0),
                         Operation::Add => todo!(),
                         Operation::Sub => todo!(),
                         Operation::Mul => todo!(),
                         Operation::Div => todo!(),
-                    }
+                        Operation::And => todo!(),
+                        Operation::Or_ => todo!(),
+                        Operation::BND => todo!(),
+                        Operation::BOR => todo!(),
+                    };
                     let end = program.code.len();
                     let rel: i8 = (start as i32 - end as i32).try_into().unwrap();
-                    program.code[end - 1] = rel as u8;
+                    program.code[jmp_rel as usize] = rel as u8;
                 }
                 _ => {
                     todo!();

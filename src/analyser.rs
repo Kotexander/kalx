@@ -89,10 +89,7 @@ pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, 
             let rhs = analyse_expr(rhs, info)?;
 
             if lhs == rhs {
-                Ok(match op {
-                    Operation::GTC | Operation::LTC => Type::Bool,
-                    _ => lhs,
-                })
+                Ok(if op.is_comparator() { Type::Bool } else { lhs })
             } else {
                 Err(format!("tried invalid operation `{lhs} {op} {rhs}`"))
             }
@@ -171,7 +168,9 @@ pub fn analyse_instruction(
         Instruction::Loop(block) => analyse_block(block, info),
         Instruction::While { expr, block } => {
             let typ = analyse_expr(expr, info)?;
-            assert_eq!(typ, Type::Bool);
+            if typ != Type::Bool {
+                return Err(format!("while loop expects type `bool` by got `{typ}`"));
+            }
             for instruction in block.iter() {
                 analyse_instruction(instruction, info)?;
             }
