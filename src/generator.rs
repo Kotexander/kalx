@@ -95,14 +95,24 @@ pub enum Register {
     ECX,
     EDX,
 }
+impl Register {
+    fn next(&self) -> Self {
+        match self {
+            Self::EAX => Self::EBX,
+            Self::EBX => Self::ECX,
+            Self::ECX => Self::EDX,
+            Self::EDX =>  panic!("end of the line for usable registers"),
+        }
+    }
+}
 #[allow(clippy::from_over_into)]
 impl Into<RM32> for Register {
     fn into(self) -> RM32 {
         match self {
-            Register::EAX => RM32::EAX,
-            Register::EBX => RM32::EBX,
-            Register::ECX => RM32::ECX,
-            Register::EDX => RM32::EDX,
+            Self::EAX => RM32::EAX,
+            Self::EBX => RM32::EBX,
+            Self::ECX => RM32::ECX,
+            Self::EDX => RM32::EDX,
         }
     }
 }
@@ -110,26 +120,25 @@ impl Into<RM32> for Register {
 impl Into<Reg32> for Register {
     fn into(self) -> Reg32 {
         match self {
-            Register::EAX => Reg32::EAX,
-            Register::EBX => Reg32::EBX,
-            Register::ECX => Reg32::ECX,
-            Register::EDX => Reg32::EDX,
+            Self::EAX => Reg32::EAX,
+            Self::EBX => Reg32::EBX,
+            Self::ECX => Reg32::ECX,
+            Self::EDX => Reg32::EDX,
         }
     }
 }
 #[derive(Debug, Clone, Copy)]
 pub enum Intent {
     Load,
-    Add,
-    Sub,
+    Op(Operation),
 }
 
 pub fn mov_reg_imm<E: Endian>(program: &mut Program<E>, reg: Register, num: u32) -> u32 {
     match reg {
-        Register::EAX => program.mov_eax_imm(num),
-        Register::EBX => program.mov_ebx_imm(num),
-        Register::ECX => program.mov_ecx_imm(num),
-        Register::EDX => program.mov_edx_imm(num),
+        Register::EAX => program.mov_eax_imm32(num),
+        Register::EBX => program.mov_ebx_imm32(num),
+        Register::ECX => program.mov_ecx_imm32(num),
+        Register::EDX => program.mov_edx_imm32(num),
     }
 }
 
@@ -146,28 +155,38 @@ pub fn generate_expr<E: Endian>(
             Intent::Load => {
                 mov_reg_imm(program, register, *num);
             }
-            Intent::Add => match register {
-                Register::EAX => {
-                    program.add_eax_imm(*num);
+            Intent::Op(op) => match op {
+                Operation::Add => {
+                    if let Register::EAX = register {
+                        program.add_eax_imm32(*num);
+                    } else {
+                        program.add_rm_imm32(register.into(), *num);
+                    }
                 }
-                _ => {
-                    // TODO: replace with register specific instructions
-                    program.add_rm_imm(register.into(), *num);
+                Operation::Sub => {
+                    if let Register::EAX = register {
+                        program.sub_eax_imm32(*num);
+                    } else {
+                        program.sub_rm_imm32(register.into(), *num);
+                    }
                 }
+                Operation::Mul => {
+                    program.mul_r_rm_imm32(register.into(), register.into(), *num);
+                }
+                Operation::Div => {
+                    todo!();
+                }
+                _ => todo!(),
             },
-            Intent::Sub => {
-                // TODO: replace with register specific instructions
-                program.sub_rm_imm(register.into(), *num);
-            }
         },
         Expression::String(string) => match intent {
             Intent::Load => {
-                // let (rel_str, _addr) = rel_info.strs.get_mut(string).unwrap();
                 let rel = mov_reg_imm(program, register, 0);
                 rel_info.strs.add_rel(string, rel);
             }
-            Intent::Add => todo!(),
-            Intent::Sub => todo!(),
+            Intent::Op(_) => {
+                todo!();
+            }
         },
         Expression::Ident(id) => {
             let (typ, addr) = vars.get(id).unwrap();
@@ -176,94 +195,95 @@ pub fn generate_expr<E: Endian>(
                     Intent::Load => {
                         program.mov_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap())
                     }
-                    Intent::Add => todo!(),
-                    Intent::Sub => todo!(),
+                    Intent::Op(_op) => {
+                        todo!();
+                    }
                 },
                 Type::U32 => match intent {
                     Intent::Load => {
                         program.mov_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
                     }
-                    Intent::Add => {
-                        program.add_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
-                    }
-                    Intent::Sub => {
-                        program.sub_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
-                    }
+                    Intent::Op(op) => match op {
+                        Operation::Add => {
+                            program.add_r_rm8(
+                                register.into(),
+                                RM32::EBP,
+                                (*addr).try_into().unwrap(),
+                            );
+                        }
+                        Operation::Sub => {
+                            program.sub_r_rm8(
+                                register.into(),
+                                RM32::EBP,
+                                (*addr).try_into().unwrap(),
+                            );
+                        }
+                        Operation::Mul => {
+                            program.mul_r_rm8(
+                                register.into(),
+                                RM32::EBP,
+                                (*addr).try_into().unwrap(),
+                            );
+                        }
+                        Operation::Div => {
+                            todo!();
+                        }
+
+                        _ => todo!(),
+                    },
                 },
                 Type::Bool => todo!(),
                 Type::Void => todo!(),
             }
         }
-        Expression::Operation { lhs, op, rhs } => match intent {
-            Intent::Load => {
-                generate_expr(program, Intent::Load, register, lhs, vars, rel_info);
-                match op {
-                    Operation::Add => {
-                        generate_expr(program, Intent::Add, register, rhs, vars, rel_info);
-                    }
-                    Operation::Sub => {
-                        generate_expr(program, Intent::Sub, register, rhs, vars, rel_info);
-                    }
-                    Operation::Mul => todo!(),
-                    Operation::Div => todo!(),
-                    Operation::GTC => todo!(),
-                    Operation::LTC => todo!(),
-                    Operation::GTE => todo!(),
-                    Operation::LTE => todo!(),
-                    Operation::And => todo!(),
-                    Operation::Or_ => todo!(),
-                    Operation::BND => todo!(),
-                    Operation::BOR => todo!(),
+        Expression::Operation { lhs, op, rhs } => {
+            let lhs_reg = register;
+            let rhs_reg = register.next();
+            generate_expr(program, Intent::Load, lhs_reg, lhs, vars, rel_info);
+            generate_expr(program, Intent::Load, rhs_reg, rhs, vars, rel_info);
+            match op {
+                Operation::Add => {
+                    program.add_rm_r(lhs_reg.into(), rhs_reg.into());
                 }
-            }
-            Intent::Add => {
-                generate_expr(program, Intent::Add, register, lhs, vars, rel_info);
-                match op {
-                    Operation::Add => {
-                        generate_expr(program, Intent::Add, register, rhs, vars, rel_info);
-                    }
-                    Operation::Sub => {
-                        generate_expr(program, Intent::Sub, register, rhs, vars, rel_info);
-                    }
-                    Operation::Mul => todo!(),
-                    Operation::Div => todo!(),
-                    Operation::GTC => todo!(),
-                    Operation::LTC => todo!(),
-                    Operation::GTE => todo!(),
-                    Operation::LTE => todo!(),
-                    Operation::And => todo!(),
-                    Operation::Or_ => todo!(),
-                    Operation::BND => todo!(),
-                    Operation::BOR => todo!(),
+                Operation::Sub => {
+                    program.sub_rm_r(lhs_reg.into(), rhs_reg.into());
                 }
-            }
-            Intent::Sub => {
-                generate_expr(program, Intent::Sub, register, lhs, vars, rel_info);
-                match op {
-                    Operation::Add => {
-                        generate_expr(program, Intent::Sub, register, rhs, vars, rel_info);
-                    }
-                    Operation::Sub => {
-                        generate_expr(program, Intent::Add, register, rhs, vars, rel_info);
-                    }
-                    Operation::Mul => todo!(),
-                    Operation::Div => todo!(),
-                    Operation::GTC => todo!(),
-                    Operation::LTC => todo!(),
-                    Operation::GTE => todo!(),
-                    Operation::LTE => todo!(),
-                    Operation::And => todo!(),
-                    Operation::Or_ => todo!(),
-                    Operation::BND => todo!(),
-                    Operation::BOR => todo!(),
+                Operation::Mul => {
+                    program.mul_r_rm(lhs_reg.into(), rhs_reg.into());
                 }
+                Operation::Div => todo!(),
+
+                _ => todo!(),
             }
-        },
+            // match intent {
+            //     Intent::Load => {
+            //         // let lhs_reg = register;
+            //         generate_expr(program, Intent::Load, register, lhs, vars, rel_info);
+            //         match op {
+            //             Operation::Add | Operation::Sub => {
+            //                 generate_expr(program, Intent::Op(*op), register, rhs, vars, rel_info);
+            //                 // program.add_rm_r(lhs_reg.into(), rhs_reg.into());
+            //             }
+            //             Operation::Mul => {
+            //                 let rhs_reg = register.next();
+            //                 generate_expr(program, Intent::Load, rhs_reg, rhs, vars, rel_info);
+            //                 program.mul_r_rm(register.into(), rhs_reg.into());
+            //             }
+            //             Operation::Div => todo!(),
+
+            //             _ => todo!(),
+            //         }
+            //     }
+            //     Intent::Op(intent_op) => {
+            //         generate_expr(program, Intent::Load, register.next(), expr, vars, rel_info);
+            //         todo!()
+            //     },
+            // }
+        }
         Expression::Index { expr: _, index: _ } => todo!(),
         Expression::Function { name, args } => {
-            match &name[..] {
+            match name.as_str() {
                 "exit" => {
-                    // inline
                     generate_expr(
                         program,
                         Intent::Load,
@@ -356,15 +376,7 @@ pub fn generate_instruction<E: Endian>(
                         Operation::GTC => program.jg(0),
                         Operation::LTC => program.jl(0),
                         Operation::GTE => program.jge(0),
-                        Operation::LTE => program.jle(0),
-                        Operation::Add => todo!(),
-                        Operation::Sub => todo!(),
-                        Operation::Mul => todo!(),
-                        Operation::Div => todo!(),
-                        Operation::And => todo!(),
-                        Operation::Or_ => todo!(),
-                        Operation::BND => todo!(),
-                        Operation::BOR => todo!(),
+                        _ => todo!(),
                     };
                     let end = program.code.len();
                     let rel: i8 = (start as i32 - end as i32).try_into().unwrap();

@@ -8,30 +8,34 @@
     var s = "hi ";
     while i < 10 {
         printf(s);
-        printf("loop %u, const %u\n", i, 23 + 23);
+        printf("loop %u, const %u\n", i, 24 + 23 * 2);
         i = i + 1;
-        var j = 0;
-        while j < 3 {
-            printf("inner %u\n", j);
-            j = j + 1;
-        }
+        // var j = 0;
+        // while j < 3*3 {
+        //     printf("inner %u\n", j);
+        //     j = j + 1;
+        // }
     }
 
     printf("last1 %s\n", hello);
     printf("last2 %s\n", bye);
 
-    /// Fibonacci
+    // Fibonacci
     printf("\n\nFibonacci:\n");
     var fi = 0;
     var fa = 0;
     var fb = 1;
-    while fi<=47{
-        printf("%+2u: %u\n", fi, fa);
+    while fi < 48 { // 48 iterations before fa and fb overflow 
+        printf("%+2u: %u\n", fi+1, fa);
         var ft = fa + fb;
         fa = fb;
         fb = ft;
         fi = fi + 1;
     }
 
-    exit(1);
+    var x = 23;
+    var y = 2;
+    var z = x * ((y + 1) * 5) * y;
+    printf("\n%u\n", z);
+    exit(0);
 }

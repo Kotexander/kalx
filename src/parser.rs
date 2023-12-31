@@ -210,7 +210,7 @@ pub fn parse(code: &str) -> Result<Block, String> {
 
         loop {
             let repeat = if parse_function(&mut nodes) || parse_block(&mut nodes) {
-                true
+                  true
             } else {
                 match &nodes.0[..] {
                     // string -> expr
