@@ -20,6 +20,14 @@ impl Type {
         };
         Some(typ)
     }
+    pub fn size(&self) -> u32 {
+        match self {
+            Type::String => 4,
+            Type::U32 => 4,
+            Type::Bool => 0,
+            Type::Void => 1,
+        }
+    }
 }
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

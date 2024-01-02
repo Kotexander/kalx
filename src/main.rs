@@ -65,18 +65,21 @@ fn run<E: Endian>() -> Result<(), String> {
     let code = std::fs::read_to_string("main.kx").unwrap();
 
     let block = parse(&code)?;
+    // panic!("{block:#?}");
 
     let info = analyse(&block)?;
-    let (allocated, vars) = generate_info(info);
+    dbg!(&info);
+    let alloc_info = generate_info(info);
+    dbg!(&alloc_info);
 
     let mut text = Program::<E>::new();
 
     // setup stack
     text.mov_edp_esp();
-    text.sub_esp_imm8(allocated.unsigned_abs().try_into().unwrap());
+    text.sub_esp_imm8(alloc_info.alloc.unsigned_abs().try_into().unwrap());
 
     let mut rel_info = RelInfo::new();
-    generate_block(&mut text, &block, &vars, &mut rel_info);
+    generate_block(&mut text, &block, &alloc_info.vars, &mut rel_info, TempInfo::new(alloc_info.temp_start));
     text.mov_esp_edp();
 
     let processed_strs = process_strs(rel_info.strs);
@@ -179,14 +182,6 @@ fn run<E: Endian>() -> Result<(), String> {
             (i, rels)
         })
         .collect();
-    // sym_table.add(
-    //     "printf",
-    //     SymbolEntry::<E> {
-    //         info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
-    //         shndx: U16::new(0),
-    //         ..Default::default()
-    //     },
-    // );
 
     let strtab_i = builder
         .sh

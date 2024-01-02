@@ -39,9 +39,61 @@ impl DeclaredFun {
 }
 
 #[derive(Debug, Clone)]
+pub struct TempVar(pub Vec<(Type, usize)>);
+impl TempVar {
+    fn new() -> Self {
+        Self(vec![])
+    }
+    fn get(&self, typ: &Type) -> Option<usize> {
+        self.0.iter().find_map(|(t, n)| if *t == *typ {Some(*n)} else {None})
+
+    }
+    fn get_mut(&mut self, typ: &Type) -> Option<&mut usize> {
+        self.0.iter_mut().find_map(|(t, n)| if *t == *typ {Some(n)} else {None})
+    }
+    fn add(&mut self, typ: Type) {
+        self.add_num(typ, 1);
+    }
+    fn add_num(&mut self, typ: Type, num: usize) {
+        match self.get_mut(&typ) {
+            Some(n) => {
+                *n += num;
+            }
+            None => {
+                self.0.push((typ, num));
+            }
+        }
+    }
+    fn merge(&self, other: &Self) -> Self {
+        let mut types = vec![];
+        for (typ, _) in self.0.iter() {
+            if !types.contains(typ) {
+                types.push(*typ);
+            }
+        }
+        for (typ, _) in other.0.iter() {
+            if !types.contains(typ) {
+                types.push(*typ);
+            }
+        }
+
+        let mut result = Self::new();
+        for typ in types {
+            let num1 = self.get(&typ).unwrap_or(0);
+            let num2 = other.get(&typ).unwrap_or(0);
+            let num = num1.max(num2);
+            assert!(num != 0, "number of types should not equal 0");
+            result.0.push((typ, num));
+        }
+
+        result
+    }
+}
+#[derive(Debug, Clone)]
 pub struct AnalysisInfo {
     pub declared_vars: HashMap<Rc<String>, DeclaredVar>,
     pub declared_funs: HashMap<Rc<String>, DeclaredFun>,
+    pub temp_vars: TempVar,
 }
 impl AnalysisInfo {
     pub fn new() -> Self {
@@ -58,19 +110,25 @@ impl AnalysisInfo {
         declared_funs.insert(Rc::new(String::from("printf")), printf);
         declared_funs.insert(Rc::new(String::from("exit")), exit);
 
+        let temp_vars = TempVar::new();
         Self {
             declared_vars,
             declared_funs,
+            temp_vars,
         }
     }
 }
 
 pub fn analyse(block: &Block) -> Result<AnalysisInfo, String> {
     let mut info = AnalysisInfo::new();
-    match analyse_block(block, &mut info) {
-        Ok(_) => Ok(info),
-        Err(e) => Err(e),
+    let mut largest_temp = info.temp_vars.clone();
+    for instruction in block.iter() {
+        info.temp_vars.0.clear();
+        analyse_instruction(instruction, &mut info)?;
+        largest_temp = largest_temp.merge(&info.temp_vars);
     }
+    info.temp_vars = largest_temp;
+    Ok(info)
 }
 
 pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, String> {
@@ -85,13 +143,22 @@ pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, 
             None => Err(format!("undefined variable `{id}`")),
         },
         Expression::Operation { lhs, op, rhs } => {
-            let lhs = analyse_expr(lhs, info)?;
-            let rhs = analyse_expr(rhs, info)?;
+            let lhs_type = analyse_expr(lhs, info)?;
+            let rhs_type = analyse_expr(rhs, info)?;
+            // info.temp_vars.add(lhs_type);
+            info.temp_vars.add(rhs_type);
 
-            if lhs == rhs {
-                Ok(if op.is_comparator() { Type::Bool } else { lhs })
+            if lhs_type == rhs_type {
+                let typ = if op.is_comparator() {
+                    Type::Bool
+                } else {
+                    lhs_type
+                };
+                Ok(typ)
             } else {
-                Err(format!("tried invalid operation `{lhs} {op} {rhs}`"))
+                Err(format!(
+                    "tried invalid operation `{lhs_type} {op} {rhs_type}`"
+                ))
             }
         }
         Expression::Index { expr, index } => {

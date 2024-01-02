@@ -68,245 +68,100 @@ impl RelInfo {
     }
 }
 
+// TODO: use array instead of hashmap
 type Vars = HashMap<Rc<String>, (Type, i32)>;
 
-pub fn generate_info(info: AnalysisInfo) -> (i32, Vars) {
+#[derive(Debug, Clone)]
+pub struct AllocInfo {
+    pub alloc: i32,
+    pub vars: Vars,
+    pub temp_start: i32,
+}
+pub fn generate_info(info: AnalysisInfo) -> AllocInfo {
     let mut vars = Vars::new();
 
     let mut alloc = 0;
     for (id, var) in info.declared_vars {
         alloc -= match var.typ {
-            Type::String => 4,
-            Type::U32 => 4,
-            Type::Bool => 1,
             Type::Void => continue,
+            _ => var.typ.size() as i32,
         };
         vars.insert(id, (var.typ, alloc));
     }
+    let temp_start = alloc;
+    for (typ, num) in info.temp_vars.0.iter() {
+        alloc -= typ.size() as i32 * (*num as i32);
+    }
+    alloc += 4 * 3;
 
-    (alloc, vars)
+    AllocInfo {
+        alloc,
+        vars,
+        temp_start,
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct TempInfo {
+    pub temp_start: i32,
+    pub storage: TempStorage,
+}
+impl TempInfo {
+    pub fn new(temp_start: i32) -> Self {
+        Self {
+            temp_start,
+            storage: TempStorage::Register(TempRegister::EBX),
+        }
+    }
+    pub fn next(&self) -> Self {
+        Self {
+            temp_start: self.temp_start,
+            storage: self.storage.next(self.temp_start),
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub enum TempStorage {
+    Register(TempRegister),
+    Stack(i32),
+}
+impl TempStorage {
+    pub fn next(&self, temp_start: i32) -> Self {
+        match self {
+            TempStorage::Register(reg) => match reg {
+                // TempRegister::EDX => TempStorage::Register(TempRegister::EBX),
+                TempRegister::EBX => TempStorage::Register(TempRegister::ESI),
+                TempRegister::ESI => TempStorage::Register(TempRegister::EDI),
+                TempRegister::EDI => TempStorage::Stack(temp_start - 4),
+            },
+            TempStorage::Stack(offset) => TempStorage::Stack(offset - 4),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
-pub enum Register {
-    EAX,
+pub enum TempRegister {
     EBX,
-    ECX,
-    EDX,
-}
-impl Register {
-    fn next(&self) -> Self {
-        match self {
-            Self::EAX => Self::EBX,
-            Self::EBX => Self::ECX,
-            Self::ECX => Self::EDX,
-            Self::EDX =>  panic!("end of the line for usable registers"),
-        }
-    }
+    ESI,
+    EDI,
 }
 #[allow(clippy::from_over_into)]
-impl Into<RM32> for Register {
+impl Into<RM32> for TempRegister {
     fn into(self) -> RM32 {
         match self {
-            Self::EAX => RM32::EAX,
             Self::EBX => RM32::EBX,
-            Self::ECX => RM32::ECX,
-            Self::EDX => RM32::EDX,
+            Self::ESI => RM32::ESI,
+            Self::EDI => RM32::EDI,
         }
     }
 }
 #[allow(clippy::from_over_into)]
-impl Into<Reg32> for Register {
+impl Into<Reg32> for TempRegister {
     fn into(self) -> Reg32 {
         match self {
-            Self::EAX => Reg32::EAX,
             Self::EBX => Reg32::EBX,
-            Self::ECX => Reg32::ECX,
-            Self::EDX => Reg32::EDX,
-        }
-    }
-}
-#[derive(Debug, Clone, Copy)]
-pub enum Intent {
-    Load,
-    Op(Operation),
-}
-
-pub fn mov_reg_imm<E: Endian>(program: &mut Program<E>, reg: Register, num: u32) -> u32 {
-    match reg {
-        Register::EAX => program.mov_eax_imm32(num),
-        Register::EBX => program.mov_ebx_imm32(num),
-        Register::ECX => program.mov_ecx_imm32(num),
-        Register::EDX => program.mov_edx_imm32(num),
-    }
-}
-
-pub fn generate_expr<E: Endian>(
-    program: &mut Program<E>,
-    intent: Intent,
-    register: Register,
-    expr: &Expression,
-    vars: &Vars,
-    rel_info: &mut RelInfo,
-) {
-    match expr {
-        Expression::Number(num) => match intent {
-            Intent::Load => {
-                mov_reg_imm(program, register, *num);
-            }
-            Intent::Op(op) => match op {
-                Operation::Add => {
-                    if let Register::EAX = register {
-                        program.add_eax_imm32(*num);
-                    } else {
-                        program.add_rm_imm32(register.into(), *num);
-                    }
-                }
-                Operation::Sub => {
-                    if let Register::EAX = register {
-                        program.sub_eax_imm32(*num);
-                    } else {
-                        program.sub_rm_imm32(register.into(), *num);
-                    }
-                }
-                Operation::Mul => {
-                    program.mul_r_rm_imm32(register.into(), register.into(), *num);
-                }
-                Operation::Div => {
-                    todo!();
-                }
-                _ => todo!(),
-            },
-        },
-        Expression::String(string) => match intent {
-            Intent::Load => {
-                let rel = mov_reg_imm(program, register, 0);
-                rel_info.strs.add_rel(string, rel);
-            }
-            Intent::Op(_) => {
-                todo!();
-            }
-        },
-        Expression::Ident(id) => {
-            let (typ, addr) = vars.get(id).unwrap();
-            match typ {
-                Type::String => match intent {
-                    Intent::Load => {
-                        program.mov_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap())
-                    }
-                    Intent::Op(_op) => {
-                        todo!();
-                    }
-                },
-                Type::U32 => match intent {
-                    Intent::Load => {
-                        program.mov_r_rm8(register.into(), RM32::EBP, (*addr).try_into().unwrap());
-                    }
-                    Intent::Op(op) => match op {
-                        Operation::Add => {
-                            program.add_r_rm8(
-                                register.into(),
-                                RM32::EBP,
-                                (*addr).try_into().unwrap(),
-                            );
-                        }
-                        Operation::Sub => {
-                            program.sub_r_rm8(
-                                register.into(),
-                                RM32::EBP,
-                                (*addr).try_into().unwrap(),
-                            );
-                        }
-                        Operation::Mul => {
-                            program.mul_r_rm8(
-                                register.into(),
-                                RM32::EBP,
-                                (*addr).try_into().unwrap(),
-                            );
-                        }
-                        Operation::Div => {
-                            todo!();
-                        }
-
-                        _ => todo!(),
-                    },
-                },
-                Type::Bool => todo!(),
-                Type::Void => todo!(),
-            }
-        }
-        Expression::Operation { lhs, op, rhs } => {
-            let lhs_reg = register;
-            let rhs_reg = register.next();
-            generate_expr(program, Intent::Load, lhs_reg, lhs, vars, rel_info);
-            generate_expr(program, Intent::Load, rhs_reg, rhs, vars, rel_info);
-            match op {
-                Operation::Add => {
-                    program.add_rm_r(lhs_reg.into(), rhs_reg.into());
-                }
-                Operation::Sub => {
-                    program.sub_rm_r(lhs_reg.into(), rhs_reg.into());
-                }
-                Operation::Mul => {
-                    program.mul_r_rm(lhs_reg.into(), rhs_reg.into());
-                }
-                Operation::Div => todo!(),
-
-                _ => todo!(),
-            }
-            // match intent {
-            //     Intent::Load => {
-            //         // let lhs_reg = register;
-            //         generate_expr(program, Intent::Load, register, lhs, vars, rel_info);
-            //         match op {
-            //             Operation::Add | Operation::Sub => {
-            //                 generate_expr(program, Intent::Op(*op), register, rhs, vars, rel_info);
-            //                 // program.add_rm_r(lhs_reg.into(), rhs_reg.into());
-            //             }
-            //             Operation::Mul => {
-            //                 let rhs_reg = register.next();
-            //                 generate_expr(program, Intent::Load, rhs_reg, rhs, vars, rel_info);
-            //                 program.mul_r_rm(register.into(), rhs_reg.into());
-            //             }
-            //             Operation::Div => todo!(),
-
-            //             _ => todo!(),
-            //         }
-            //     }
-            //     Intent::Op(intent_op) => {
-            //         generate_expr(program, Intent::Load, register.next(), expr, vars, rel_info);
-            //         todo!()
-            //     },
-            // }
-        }
-        Expression::Index { expr: _, index: _ } => todo!(),
-        Expression::Function { name, args } => {
-            match name.as_str() {
-                "exit" => {
-                    generate_expr(
-                        program,
-                        Intent::Load,
-                        Register::EBX,
-                        &args[0],
-                        vars,
-                        rel_info,
-                    );
-                    program.exit();
-                }
-                _ => {
-                    // TODO: account for size
-                    let mut stack = 0;
-                    for arg in args.iter().rev() {
-                        generate_expr(program, Intent::Load, Register::EAX, arg, vars, rel_info);
-                        program.push_eax();
-                        stack += 4;
-                    }
-                    let rel = program.call_rel32(-4);
-                    rel_info.funs.add_rel(name, rel);
-                    program.add_esp_imm8(stack);
-                }
-            }
+            Self::ESI => Reg32::ESI,
+            Self::EDI => Reg32::EDI,
         }
     }
 }
@@ -316,74 +171,160 @@ pub fn generate_block<E: Endian>(
     block: &Block,
     vars: &Vars,
     rel_info: &mut RelInfo,
+    temp: TempInfo,
 ) {
     for instruction in block.iter() {
-        generate_instruction(program, instruction, vars, rel_info);
+        generate_instruction(program, instruction, vars, rel_info, temp);
     }
 }
-
 pub fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
     vars: &Vars,
     rel_info: &mut RelInfo,
+    temp: TempInfo,
 ) {
     match instruction {
         Instruction::Declare { id, value } | Instruction::Assign { id, value } => {
-            let (typ, addr) = vars.get(id).unwrap();
-            match typ {
-                Type::String => {
-                    generate_expr(program, Intent::Load, Register::EAX, value, vars, rel_info);
-                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, (*addr).try_into().unwrap());
-                }
-                Type::U32 => {
-                    generate_expr(program, Intent::Load, Register::EAX, value, vars, rel_info);
-                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, (*addr).try_into().unwrap());
-                }
-                Type::Bool => todo!(),
-                Type::Void => todo!(),
-            }
+            generate_expr(program, value, vars, rel_info, temp);
+            let (_typ, offset) = &vars[id];
+            program.mov_rm8_r(RM32::EBP, Reg32::EAX, (*offset).try_into().unwrap());
         }
         Instruction::Expr(expr) => {
-            generate_expr(program, Intent::Load, Register::EAX, expr, vars, rel_info);
+            generate_expr(program, expr, vars, rel_info, temp);
         }
         Instruction::Loop(block) => {
             program.loop_fn(|program| {
-                for instruction in block.iter() {
-                    generate_instruction(program, instruction, vars, rel_info);
-                }
+                generate_block(program, block, vars, rel_info, temp);
             });
         }
-        Instruction::While { expr, block } => {
-            let addr_start = program.jmp_rel(0);
-            let start = program.code.len();
-            // body
-            for instruction in block.iter() {
-                generate_instruction(program, instruction, vars, rel_info);
-            }
-            let first_jmp_end = program.code.len();
-            let rel: i8 = (first_jmp_end as i32 - start as i32).try_into().unwrap();
-            program.code[addr_start as usize] = rel as u8;
+        Instruction::While { expr:_, block :_} => {
+            todo!()
+            // let addr_start = program.jmp_rel(0);
+            // let start = program.code.len();
+
+            // generate_block(program, block, vars, rel_info, temp);
+
+            // let first_jmp_end = program.code.len();
+            // let rel: i8 = (first_jmp_end as i32 - start as i32).try_into().unwrap();
+            // program.code[addr_start as usize] = rel as u8;
+            
+            // generate_expr(program, expr, vars, rel_info, temp);
+            //         program.cmp_r_rm(Reg32::EAX, RM32::ECX);
+            //         let jmp_rel = match op {
+            //             Operation::GTC => program.jg(0),
+            //             Operation::LTC => program.jl(0),
+            //             Operation::GTE => program.jge(0),
+            //             _ => todo!(),
+            //         };
+            //         let end = program.code.len();
+            //         let rel: i8 = (start as i32 - end as i32).try_into().unwrap();
+            //         program.code[jmp_rel as usize] = rel as u8;
             // cmp
-            match &**expr {
-                Expression::Operation { lhs, op, rhs } => {
-                    let r_lhs = Register::EAX;
-                    let r_rhs = Register::EBX;
-                    generate_expr(program, Intent::Load, r_lhs, lhs, vars, rel_info);
-                    generate_expr(program, Intent::Load, r_rhs, rhs, vars, rel_info);
-                    program.cmp_r_rm(r_lhs.into(), r_rhs.into());
-                    let jmp_rel = match op {
-                        Operation::GTC => program.jg(0),
-                        Operation::LTC => program.jl(0),
-                        Operation::GTE => program.jge(0),
-                        _ => todo!(),
-                    };
-                    let end = program.code.len();
-                    let rel: i8 = (start as i32 - end as i32).try_into().unwrap();
-                    program.code[jmp_rel as usize] = rel as u8;
+            // match &**expr {
+            //     Expression::Operation { lhs, op, rhs } => {
+            //         generate_expr(
+            //             program,
+            //             r_lhs,
+            //             lhs,
+            //             vars,
+            //             rel_info,
+            //             temp,
+            //         );
+            //         generate_expr(
+            //             program,
+            //             Intent::Load,
+            //             r_rhs,
+            //             rhs,
+            //             vars,
+            //             rel_info,
+            //             temp,
+            //         );
+            //     }
+            //     _ => {
+            //         todo!();
+            //     }
+            // }
+        }
+    }
+}
+pub fn generate_expr<E: Endian>(
+    program: &mut Program<E>,
+    expr: &Expression,
+    vars: &Vars,
+    rel_info: &mut RelInfo,
+    temp: TempInfo,
+) {
+    match expr {
+        Expression::Number(num) => {
+            program.mov_eax_imm32(*num);
+        }
+        Expression::String(string) => {
+            let rel = program.mov_eax_imm32(0);
+            rel_info.strs.add_rel(string, rel);
+        }
+        Expression::Ident(id) => {
+            let (_typ, offset) = &vars[id];
+            program.mov_r_rm8(Reg32::EAX, RM32::EBP, (*offset).try_into().unwrap());
+        }
+        Expression::Operation { lhs, op, rhs } => {
+            generate_expr(program, lhs, vars, rel_info, temp);
+            // put lhs into storage
+            match temp.storage {
+                TempStorage::Register(reg) => {
+                    program.mov_rm_r(reg.into(), Reg32::EAX);
+                }
+                TempStorage::Stack(offset) => {
+                    program.mov_rm8_r(RM32::EBP, Reg32::EAX, (offset).try_into().unwrap());
+                }
+            }
+            generate_expr(program, rhs, vars, rel_info, temp.next());
+            // move rhs into rhs reg
+            program.mov_rm_r(RM32::ECX, Reg32::EAX);
+            // recover lhs
+            match temp.storage {
+                TempStorage::Register(reg) => {
+                    program.mov_rm_r(RM32::EAX, reg.into());
+                }
+                TempStorage::Stack(offset) => {
+                    program.mov_r_rm8(Reg32::EAX, RM32::EBP, (offset).try_into().unwrap());
+                }
+            }
+            match op {
+                Operation::Add => {
+                    program.add_rm_r(RM32::EAX, Reg32::ECX);
+                }
+                Operation::Sub => {
+                    program.sub_rm_r(RM32::EAX, Reg32::ECX);
+                }
+                Operation::Mul => {
+                    program.mul_r_rm(Reg32::EAX, RM32::ECX);
+                }
+                Operation::Div => {
+                    program.div_rm(RM32::ECX);
+                },
+                _ => todo!(),
+            }
+        }
+        Expression::Index { expr: _, index: _ } => todo!(),
+        Expression::Function { name, args } => {
+            match name.as_str() {
+                "exit" => {
+                    generate_expr(program, &args[0], vars, rel_info, temp);
+                    program.mov_rm_r(RM32::EBX, Reg32::EAX);
+                    program.exit();
                 }
                 _ => {
-                    todo!();
+                    // TODO: account for size
+                    let mut stack = 0;
+                    for arg in args.iter().rev() {
+                        generate_expr(program, arg, vars, rel_info, temp);
+                        program.push_eax();
+                        stack += 4;
+                    }
+                    let rel = program.call_rel32(-4);
+                    rel_info.funs.add_rel(name, rel);
+                    program.add_esp_imm8(stack);
                 }
             }
         }

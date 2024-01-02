@@ -40,6 +40,18 @@ pub enum Expression {
         args: Vec<Rc<Expression>>,
     },
 }
+// impl Expression {
+//     pub fn is_recursive(&self) -> bool {
+//         match self {
+//             Expression::Number(_) => false,
+//             Expression::String(_) => false,
+//             Expression::Ident(_) => false,
+//             Expression::Operation { .. } => true,
+//             Expression::Index {.. } => true,
+//             Expression::Function {.. } => true,
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 #[allow(clippy::upper_case_acronyms)]

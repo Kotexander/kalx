@@ -82,15 +82,17 @@ impl<E: Endian> Program<E> {
         let modrm32 = modrm32(Mod32::Disp08, rm, reg);
         self.code.extend_from_slice(&[0x8B, modrm32, disp as u8]);
     }
+    pub fn mov_rm_r(&mut self, rm: RM32, reg: Reg32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, reg);
+        self.code.extend_from_slice(&[0x89, modrm32]);
+    }
+    pub fn mov_r_rm(&mut self, reg: Reg32, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, reg);
+        self.code.extend_from_slice(&[0x8B, modrm32]);
+    }
 
     pub fn mov_eax_imm32(&mut self, imm: u32) -> u32 {
         self.code.push(0xB8);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_ebx_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xBB);
         let rel = self.addr();
         self.imm32(imm);
         rel
@@ -103,6 +105,30 @@ impl<E: Endian> Program<E> {
     }
     pub fn mov_edx_imm32(&mut self, imm: u32) -> u32 {
         self.code.push(0xBA);
+        let rel = self.addr();
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_ebx_imm32(&mut self, imm: u32) -> u32 {
+        self.code.push(0xBB);
+        let rel = self.addr();
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_ebp_imm32(&mut self, imm: u32) -> u32 {
+        self.code.push(0xBD);
+        let rel = self.addr();
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_esi_imm32(&mut self, imm: u32) -> u32 {
+        self.code.push(0xBE);
+        let rel = self.addr();
+        self.imm32(imm);
+        rel
+    }
+    pub fn mov_edi_imm32(&mut self, imm: u32) -> u32 {
+        self.code.push(0xBF);
         let rel = self.addr();
         self.imm32(imm);
         rel
@@ -182,11 +208,11 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0x2B, modrm32]);
     }
 
-    pub fn sub_esp_imm8(&mut self, imm: u8) {
+    pub fn sub_esp_imm8(&mut self, imm: i8) {
         self.code.extend_from_slice(&[
             0x83, // sub
             0xEC, // esp
-            imm,
+            imm as u8,
         ]);
     }
     pub fn add_esp_imm8(&mut self, imm: u8) {
@@ -217,6 +243,20 @@ impl<E: Endian> Program<E> {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code
             .extend_from_slice(&[0x0F, 0xAF, modrm32]);
+    }
+    pub fn div_rm(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::ESI);
+        self.code.extend_from_slice(&[
+            0xF7,
+            modrm32,
+        ]);
+    }
+    pub fn idiv_rm(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EDI);
+        self.code.extend_from_slice(&[
+            0xF7,
+            modrm32,
+        ]);
     }
 
     pub fn cmp_r_rm(&mut self, reg: Reg32, rm: RM32) {
