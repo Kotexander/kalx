@@ -122,7 +122,7 @@ impl AnalysisInfo {
 pub fn analyse(block: &Block) -> Result<AnalysisInfo, String> {
     let mut info = AnalysisInfo::new();
     let mut largest_temp = info.temp_vars.clone();
-    for instruction in block.iter() {
+    for instruction in block.0.iter() {
         info.temp_vars.0.clear();
         analyse_instruction(instruction, &mut info)?;
         largest_temp = largest_temp.merge(&info.temp_vars);
@@ -197,7 +197,7 @@ pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, 
 }
 
 pub fn analyse_block(block: &Block, info: &mut AnalysisInfo) -> Result<(), String> {
-    for instruction in block.iter() {
+    for instruction in block.0.iter() {
         analyse_instruction(instruction, info)?;
     }
     Ok(())
@@ -239,7 +239,7 @@ pub fn analyse_instruction(
             if typ != Type::Bool {
                 return Err(format!("while loop expects type `bool` by got `{typ}`"));
             }
-            for instruction in block.iter() {
+            for instruction in block.0.iter() {
                 analyse_instruction(instruction, info)?;
             }
             Ok(())

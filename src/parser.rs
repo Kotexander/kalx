@@ -1,8 +1,21 @@
-use std::{ffi::CString, rc::Rc};
+use std::{ffi::CString, fmt::Display, rc::Rc};
 
 use super::tokenizer::*;
 
-pub type Block = Vec<Rc<Instruction>>;
+#[derive(Debug, Clone)]
+pub struct Block(pub Vec<Rc<Instruction>>);
+impl Display for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{{")?;
+        for instruction in self.0.iter() {
+            let instruction = format!("{instruction}");
+            for line in instruction.lines() {
+                writeln!(f, "\t{line}")?;
+            }
+        }
+        write!(f, "}}")
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Instruction {
@@ -20,6 +33,17 @@ pub enum Instruction {
         expr: Rc<Expression>,
         block: Block,
     },
+}
+impl Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Declare { id, value } => write!(f, "var {id} = {value};"),
+            Instruction::Assign { id, value } => write!(f, "{id} = {value};"),
+            Instruction::Expr(expr) => write!(f, "{expr};"),
+            Instruction::Loop(block) => write!(f, "loop\n{block}"),
+            Instruction::While { expr, block } => write!(f, "while {expr}\n{block}"),
+        }
+    }
 }
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -47,8 +71,30 @@ impl Expression {
             Expression::String(_) => false,
             Expression::Ident(_) => false,
             Expression::Operation { .. } => true,
-            Expression::Index {.. } => true,
-            Expression::Function {.. } => true,
+            Expression::Index { .. } => true,
+            Expression::Function { .. } => true,
+        }
+    }
+}
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expression::Number(n) => write!(f, "{n}"),
+            Expression::String(string) => write!(f, "{string:?}"),
+            Expression::Ident(id) => write!(f, "{id}"),
+            Expression::Operation { lhs, op, rhs } => write!(f, "({lhs} {op} {rhs})"),
+            Expression::Index { expr, index } => write!(f, "{expr}[{index}]"),
+            Expression::Function { name, args } => {
+                if !args.is_empty() {
+                    write!(f, "{name}(")?;
+                    for arg in args[..args.len() - 1].iter() {
+                        write!(f, "{arg}, ")?;
+                    }
+                    write!(f, "{})", args[args.len() - 1])
+                } else {
+                    write!(f, "{name}()")
+                }
+            }
         }
     }
 }
@@ -117,12 +163,12 @@ fn parse_block(nodes: &mut Nodes) -> bool {
     // block end
     if let Node::Token(Token::BClose) = nodes.0[last] {
         let mut i = last - 1;
-        let mut instructions = vec![];
+        let mut instructions = Block(vec![]);
         loop {
             match &nodes.0[i] {
                 // block start
                 Node::Token(Token::BOpen) => {
-                    instructions.reverse();
+                    instructions.0.reverse();
                     let node: AST = instructions.into();
                     nodes.reduce(last - i + 1);
                     nodes.push(node);
@@ -130,7 +176,7 @@ fn parse_block(nodes: &mut Nodes) -> bool {
                 }
                 // instruction
                 Node::AST(AST::Instruction(instruction)) => {
-                    instructions.push(instruction.clone());
+                    instructions.0.push(instruction.clone());
                 }
                 Node::Token(Token::BClose) => {
                     // panic!();
@@ -222,7 +268,7 @@ pub fn parse(code: &str) -> Result<Block, String> {
 
         loop {
             let repeat = if parse_function(&mut nodes) || parse_block(&mut nodes) {
-                  true
+                true
             } else {
                 match &nodes.0[..] {
                     // string -> expr
@@ -322,7 +368,7 @@ pub fn parse(code: &str) -> Result<Block, String> {
                     }
                     // empty block
                     [.., Node::Token(Token::BOpen), Node::Token(Token::BClose)] => {
-                        let node: AST = Vec::<Rc<Instruction>>::new().into();
+                        let node: AST = Block(vec![]).into();
                         nodes.reduce(2);
                         nodes.push(node);
                         true

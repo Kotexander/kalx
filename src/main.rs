@@ -6,13 +6,10 @@ use elf::*;
 
 mod program;
 use program::*;
-
 mod tokenizer;
-
 use tokenizer::*;
 mod parser;
 use parser::*;
-
 mod optimizer;
 use optimizer::*;
 mod analyser;
@@ -27,7 +24,7 @@ struct ProcessedStrSymbol {
 }
 struct ProcessedStrs {
     data: Vec<u8>,
-    symbols: Vec<ProcessedStrSymbol>
+    symbols: Vec<ProcessedStrSymbol>,
 }
 fn process_strs(strs: Strings) -> ProcessedStrs {
     let data = strs
@@ -55,10 +52,7 @@ fn process_strs(strs: Strings) -> ProcessedStrs {
         })
         .collect();
 
-    ProcessedStrs {
-        data,
-        symbols,
-    }
+    ProcessedStrs { data, symbols }
 }
 
 fn run<E: Endian>() -> Result<(), String> {
@@ -68,7 +62,8 @@ fn run<E: Endian>() -> Result<(), String> {
 
     let mut block = parse(&code)?;
     optimize_block(&mut block);
-    
+    let _ = std::fs::write("main.kx.reformatted", format!("{block}"));
+
     let info = analyse(&block)?;
     // dbg!(&info);
     let alloc_info = generate_info(info);
@@ -81,7 +76,13 @@ fn run<E: Endian>() -> Result<(), String> {
     text.sub_esp_imm8(alloc_info.alloc.unsigned_abs().try_into().unwrap());
 
     let mut rel_info = RelInfo::new();
-    generate_block(&mut text, &block, &alloc_info.vars, &mut rel_info, TempInfo::new(alloc_info.temp_start));
+    generate_block(
+        &mut text,
+        &block,
+        &alloc_info.vars,
+        &mut rel_info,
+        TempInfo::new(alloc_info.temp_start),
+    );
     text.mov_esp_edp();
 
     let processed_strs = process_strs(rel_info.strs);
@@ -132,7 +133,8 @@ fn run<E: Endian>() -> Result<(), String> {
         },
     );
 
-    let str_rels: Vec<_> = processed_strs.symbols
+    let str_rels: Vec<_> = processed_strs
+        .symbols
         .into_iter()
         .map(|sym| {
             let i = sym_table.add(
@@ -207,14 +209,13 @@ fn run<E: Endian>() -> Result<(), String> {
                 offset: offset.into(),
                 info: RelEntry::<E>::info(index as u8, 1).into(),
             })
-        }).chain(
-            fun_rel.into_iter().flat_map(|(index, rels)| {
-                rels.into_iter().map(move |offset| RelEntry::<E> {
-                    offset: offset.into(),
-                    info: RelEntry::<E>::info(index as u8, 2).into(),
-                })       
+        })
+        .chain(fun_rel.into_iter().flat_map(|(index, rels)| {
+            rels.into_iter().map(move |offset| RelEntry::<E> {
+                offset: offset.into(),
+                info: RelEntry::<E>::info(index as u8, 2).into(),
             })
-        )
+        }))
         .collect();
 
     builder.sh.add(

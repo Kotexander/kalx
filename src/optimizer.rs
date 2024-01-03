@@ -85,7 +85,7 @@ pub fn optimize_instruction(instruction: &mut Instruction) {
 }
 
 pub fn optimize_block(block: &mut Block) {
-    for instuction in block.iter_mut() {
+    for instuction in block.0.iter_mut() {
         optimize_instruction(Rc::get_mut(instuction).unwrap());
     }
 }

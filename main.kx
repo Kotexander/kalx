@@ -11,7 +11,7 @@
     var b = 5;
     var c = 7;
 
-    var abc = a + b * c;
+    var abc = a + b * c; // gets optimized to b * c + a
     printf("abc = %u\n", abc);
 
     // printf("\n\nFibonacci FOREVER:\n");
@@ -52,8 +52,8 @@
         fi = fi + 1;
     }
 
-    // var w = (((50 + 20) * (100 - 30)) + (500 / (25 * 2)) - (80 - 40));
-    // printf("w = %u\n", w);
+    var w = (((50 + 20) * (100 - 30)) + (500 / (25 * 2)) - (80 - 40));
+    printf("w = %u\n", w);
     var x = 10;
     var y = 5;
     var z = x * ((y + 1) * 5) * y;

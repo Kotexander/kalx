@@ -187,7 +187,7 @@ pub fn generate_block<E: Endian>(
     rel_info: &mut RelInfo,
     temp: TempInfo,
 ) {
-    for instruction in block.iter() {
+    for instruction in block.0.iter() {
         generate_instruction(program, instruction, vars, rel_info, temp);
     }
 }

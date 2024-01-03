@@ -1,0 +1,45 @@
+{
+	var hello = "Hello world!";
+	var bye = "Goodbye world!\n";
+	printf("%s\n", hello);
+	printf(bye);
+	var a = 3;
+	var b = 5;
+	var c = 7;
+	var abc = ((b * c) + a);
+	printf("abc = %u\n", abc);
+	var i = 0;
+	var s = "hi ";
+	while (i < 10)
+	{
+		printf(s);
+		printf("loop %u\n", i);
+		i = (i + 1);
+		var j = 0;
+		while (j < 3)
+		{
+			printf("inner %u\n", j);
+			j = (j + 1);
+		}
+	}
+	printf("\n\nFibonacci:\n");
+	var fi = 0;
+	var fa = 0;
+	var fb = 1;
+	while (fi < 48)
+	{
+		printf("%+2u: %u\n", (fi + 1), fa);
+		var ft = (fa + fb);
+		fa = fb;
+		fb = ft;
+		fi = (fi + 1);
+	}
+	var w = 4870;
+	printf("w = %u\n", w);
+	var x = 10;
+	var y = 5;
+	var z = ((((y + 1) * 5) * x) * y);
+	var zdecl = "z = %u\n";
+	printf(zdecl, z);
+	exit(2);
+}
