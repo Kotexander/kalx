@@ -4,7 +4,7 @@ use std::{ffi::CStr, marker::PhantomData};
 
 use crate::elf::Endian;
 
-type ModRM32 = u8;
+#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum Mod32 {
@@ -13,6 +13,7 @@ pub enum Mod32 {
     Disp32 = 0b10,
     Direct = 0b11,
 }
+#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum RM32 {
@@ -27,6 +28,7 @@ pub enum RM32 {
     ESI = 0b110,
     EDI = 0b111,
 }
+#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum Reg32 {
@@ -39,6 +41,7 @@ pub enum Reg32 {
     ESI = 0b110,
     EDI = 0b111,
 }
+type ModRM32 = u8;
 pub fn modrm32(m: Mod32, rm: RM32, reg: Reg32) -> ModRM32 {
     ((m as u8) << 6) | ((reg as u8) << 3) | (rm as u8)
 }
@@ -179,13 +182,12 @@ impl<E: Endian> Program<E> {
     pub fn add_r_rm(&mut self, reg: Reg32, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code.extend_from_slice(&[0x03, modrm32]);
-
     }
     pub fn add_rm_r(&mut self, rm: RM32, reg: Reg32) {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code.extend_from_slice(&[0x01, modrm32]);
     }
-    
+
     pub fn sub_rm_imm32(&mut self, rm: RM32, imm: u32) {
         let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EBP);
         self.code.extend_from_slice(&[0x81, modrm32]);
@@ -241,27 +243,25 @@ impl<E: Endian> Program<E> {
     }
     pub fn mul_r_rm(&mut self, reg: Reg32, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
-        self.code
-            .extend_from_slice(&[0x0F, 0xAF, modrm32]);
+        self.code.extend_from_slice(&[0x0F, 0xAF, modrm32]);
     }
     pub fn div_rm(&mut self, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, Reg32::ESI);
-        self.code.extend_from_slice(&[
-            0xF7,
-            modrm32,
-        ]);
+        self.code.extend_from_slice(&[0xF7, modrm32]);
     }
     pub fn idiv_rm(&mut self, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EDI);
-        self.code.extend_from_slice(&[
-            0xF7,
-            modrm32,
-        ]);
+        self.code.extend_from_slice(&[0xF7, modrm32]);
     }
 
     pub fn cmp_r_rm(&mut self, reg: Reg32, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code.extend_from_slice(&[0x3B, modrm32])
+    }
+    pub fn cmp_rm_imm32(&mut self, rm: RM32, imm: u32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EDI);
+        self.code.extend_from_slice(&[0x81, modrm32]);
+        self.imm32(imm);
     }
 
     pub fn push_eax(&mut self) {
@@ -304,6 +304,42 @@ impl<E: Endian> Program<E> {
         let rel = self.addr();
         self.code.push(rel as u8);
         rel
+    }
+    pub fn jne(&mut self, rel: i8) -> u32 {
+        self.code.push(0x75);
+        let rel = self.addr();
+        self.code.push(rel as u8);
+        rel
+    }
+
+    pub fn set_e(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x0F, 0x94, modrm32]);
+    }
+    pub fn set_ne(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x0F, 0x95, modrm32]);
+    }
+    pub fn set_l(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x0F, 0x9C, modrm32]);
+    }
+    pub fn set_ge(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x0F, 0x9D, modrm32]);
+    }
+    pub fn set_le(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x0F, 0x9E, modrm32]);
+    }
+    pub fn set_g(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EAX);
+        self.code.extend_from_slice(&[0x0F, 0x9F, modrm32]);
+    }
+
+    pub fn movzx(&mut self, r: Reg32, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, r);
+        self.code.extend_from_slice(&[0x0F, 0xB6, modrm32])
     }
 
     pub fn loop_fn<F: FnMut(&mut Program<E>)>(&mut self, mut f: F) {

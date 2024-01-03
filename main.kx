@@ -12,7 +12,7 @@
     var c = 7;
 
     var abc = a + b * c;
-    printf("abc = %u", abc);
+    printf("abc = %u\n", abc);
 
     // printf("\n\nFibonacci FOREVER:\n");
     // var fi = 0;
@@ -26,41 +26,38 @@
     //     fi = fi + 1;
     // }
 
-    // var i = 0;
-    // var s = "hi ";
-    // while i < 10 {
-    //     printf(s);
-    //     printf("loop %u, const %u\n", i, (23 * 2) + (1 + 3));
-    //     i = i + 1;
-    //     var j = 0;
-    //     // while j < 3 {
-    //     //     printf("inner %u\n", j);
-    //     //     j = j + 1;
-    //     // }
-    // }
+    var i = 0;
+    var s = "hi ";
+    while i < 10 {
+        printf(s);
+        printf("loop %u\n", i);
+        i = i + 1;
+        var j = 0;
+        while j < 3 {
+            printf("inner %u\n", j);
+            j = j + 1;
+        }
+    }
 
-    // printf("last1 %s\n", hello);
-    // printf("last2 %s\n", bye);
-
-    // // Fibonacci
-    // printf("\n\nFibonacci:\n");
-    // var fi = 0;
-    // var fa = 0;
-    // var fb = 1;
-    // while fi < 48 { // 48 iterations before fa and fb overflow 
-    //     printf("%+2u: %u\n", fi+1, fa);
-    //     var ft = fa + fb;
-    //     fa = fb;
-    //     fb = ft;
-    //     fi = fi + 1;
-    // }
+    // Fibonacci
+    printf("\n\nFibonacci:\n");
+    var fi = 0;
+    var fa = 0;
+    var fb = 1;
+    while fi < 48 { // 48 iterations before fa and fb overflow 
+        printf("%+2u: %u\n", fi+1, fa);
+        var ft = fa + fb;
+        fa = fb;
+        fb = ft;
+        fi = fi + 1;
+    }
 
     // var w = (((50 + 20) * (100 - 30)) + (500 / (25 * 2)) - (80 - 40));
     // printf("w = %u\n", w);
     var x = 10;
     var y = 5;
     var z = x * ((y + 1) * 5) * y;
-    var zdecl = "\nz = %u\n";
+    var zdecl = "z = %u\n";
     printf(zdecl, z);
     exit(5/2);
 }

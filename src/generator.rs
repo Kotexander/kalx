@@ -221,53 +221,33 @@ pub fn generate_instruction<E: Endian>(
                 generate_block(program, block, vars, rel_info, temp);
             });
         }
-        Instruction::While { expr: _, block: _ } => {
-            todo!()
-            // let addr_start = program.jmp_rel(0);
-            // let start = program.code.len();
+        Instruction::While { expr, block } => {
+            // skip block once
+            let addr_start = program.jmp_rel(0);
+            let start = program.code.len();
 
-            // generate_block(program, block, vars, rel_info, temp);
+            generate_block(program, block, vars, rel_info, temp);
 
-            // let first_jmp_end = program.code.len();
-            // let rel: i8 = (first_jmp_end as i32 - start as i32).try_into().unwrap();
-            // program.code[addr_start as usize] = rel as u8;
+            let first_jmp_end = program.code.len();
+            let rel: i8 = (first_jmp_end as i32 - start as i32).try_into().unwrap();
+            program.code[addr_start as usize] = rel as u8;
 
-            // generate_expr(program, expr, vars, rel_info, temp);
-            //         program.cmp_r_rm(Reg32::EAX, RM32::ECX);
-            //         let jmp_rel = match op {
-            //             Operation::GTC => program.jg(0),
-            //             Operation::LTC => program.jl(0),
-            //             Operation::GTE => program.jge(0),
-            //             _ => todo!(),
-            //         };
-            //         let end = program.code.len();
-            //         let rel: i8 = (start as i32 - end as i32).try_into().unwrap();
-            //         program.code[jmp_rel as usize] = rel as u8;
-            // cmp
-            // match &**expr {
-            //     Expression::Operation { lhs, op, rhs } => {
-            //         generate_expr(
-            //             program,
-            //             r_lhs,
-            //             lhs,
-            //             vars,
-            //             rel_info,
-            //             temp,
-            //         );
-            //         generate_expr(
-            //             program,
-            //             Intent::Load,
-            //             r_rhs,
-            //             rhs,
-            //             vars,
-            //             rel_info,
-            //             temp,
-            //         );
-            //     }
-            //     _ => {
-            //         todo!();
-            //     }
-            // }
+            generate_expr(
+                program,
+                expr,
+                Intent::Load,
+                Register::EAX,
+                vars,
+                rel_info,
+                temp,
+            );
+
+            program.cmp_rm_imm32(RM32::EAX, 0);
+            
+            let jmp_rel = program.jne(rel);
+            let end = program.code.len();
+            let rel: i8 = (start as i32 - end as i32).try_into().unwrap();
+            program.code[jmp_rel as usize] = rel as u8;
         }
     }
 }
@@ -313,7 +293,6 @@ fn generate_simple_expr<E: Endian>(
     intent: Intent,
     register: Register,
     rel_info: &mut RelInfo,
-    // temp: TempInfo,
 ) {
     match expr {
         Expression::Number(num) => match intent {
@@ -334,10 +313,26 @@ fn generate_simple_expr<E: Endian>(
                     panic!("division is not a simple operation in x86")
                 }
 
-                Operation::GTC => todo!(),
-                Operation::LTC => todo!(),
-                Operation::GTE => todo!(),
-                Operation::LTE => todo!(),
+                Operation::GTC => {
+                    program.cmp_rm_imm32(register.into(), *num);
+                    program.set_g(register.into());
+                    program.movzx(register.into(), register.into());
+                }
+                Operation::LTC => {
+                    program.cmp_rm_imm32(register.into(), *num);
+                    program.set_l(register.into());
+                    program.movzx(register.into(), register.into());
+                }
+                Operation::GTE => {
+                    program.cmp_rm_imm32(register.into(), *num);
+                    program.set_ge(register.into());
+                    program.movzx(register.into(), register.into());
+                }
+                Operation::LTE => {
+                    program.cmp_rm_imm32(register.into(), *num);
+                    program.set_le(register.into());
+                    program.movzx(register.into(), register.into());
+                }
                 Operation::And => todo!(),
                 Operation::Or_ => todo!(),
                 Operation::BND => todo!(),
