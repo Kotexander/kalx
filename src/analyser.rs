@@ -145,8 +145,9 @@ pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, 
         Expression::Operation { lhs, op, rhs } => {
             let lhs_type = analyse_expr(lhs, info)?;
             let rhs_type = analyse_expr(rhs, info)?;
-            // info.temp_vars.add(lhs_type);
-            info.temp_vars.add(rhs_type);
+            if rhs.is_recursive() {
+                info.temp_vars.add(lhs_type);
+            }
 
             if lhs_type == rhs_type {
                 let typ = if op.is_comparator() {

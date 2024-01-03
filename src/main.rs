@@ -13,6 +13,8 @@ use tokenizer::*;
 mod parser;
 use parser::*;
 
+mod optimizer;
+use optimizer::*;
 mod analyser;
 use analyser::*;
 mod generator;
@@ -64,13 +66,13 @@ fn run<E: Endian>() -> Result<(), String> {
     let _ = std::fs::remove_file("output/main");
     let code = std::fs::read_to_string("main.kx").unwrap();
 
-    let block = parse(&code)?;
-    // panic!("{block:#?}");
-
+    let mut block = parse(&code)?;
+    optimize_block(&mut block);
+    
     let info = analyse(&block)?;
-    dbg!(&info);
+    // dbg!(&info);
     let alloc_info = generate_info(info);
-    dbg!(&alloc_info);
+    // dbg!(&alloc_info);
 
     let mut text = Program::<E>::new();
 

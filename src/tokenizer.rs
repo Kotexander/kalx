@@ -82,6 +82,12 @@ impl Operation {
             Operation::BND | Operation::BOR => 3,
         }
     }
+    pub fn is_commutative(&self) -> bool {
+        matches!(
+            self,
+            Operation::Or_ | Operation::And | Operation::Add | Operation::Mul
+        )
+    }
     pub fn can_be_operator(c: char) -> bool {
         Self::MAPPING.iter().any(|(s, _)| s.starts_with(c))
     }
