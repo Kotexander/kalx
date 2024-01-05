@@ -1,5 +1,18 @@
 use std::{fmt::Display, iter::Peekable, rc::Rc, str::CharIndices};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Id(pub Rc<String>);
+impl From<Rc<String>> for Id {
+    fn from(value: Rc<String>) -> Self {
+        Self(value)
+    }
+}
+impl Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     String,
@@ -48,6 +61,7 @@ pub enum Operation {
     LTC,
     GTE,
     LTE,
+    EQL,
     And,
     Or_,
     BND,
@@ -75,6 +89,7 @@ impl Operation {
             | Operation::LTC
             | Operation::GTE
             | Operation::LTE
+            | Operation::EQL
             | Operation::And
             | Operation::Or_ => 0,
             Operation::Add | Operation::Sub => 1,
@@ -88,14 +103,14 @@ impl Operation {
             Operation::Or_ | Operation::And | Operation::Add | Operation::Mul
         )
     }
-    pub fn can_be_operator(c: char) -> bool {
-        Self::MAPPING.iter().any(|(s, _)| s.starts_with(c))
-    }
-    /// parse with peek
-    pub fn parse(op: &str) -> Option<Self> {
-        Self::MAPPING
-            .iter()
-            .find_map(|(s, o)| if *s == op { Some(*o) } else { None })
+
+    pub fn from_start(string: &str) -> Option<(Self, usize)> {
+        for (op_str, op) in Operation::MAPPING.iter() {
+            if string.starts_with(op_str) {
+                return Some((*op, op_str.len()));
+            }
+        }
+        None
     }
 
     pub fn is_comparator(&self) -> bool {
@@ -115,6 +130,7 @@ impl Operation {
         ("<=", Self::LTE),
         ("&&", Self::And),
         ("||", Self::Or_),
+        ("==", Self::EQL),
         ("+", Self::Add),
         ("-", Self::Sub),
         ("*", Self::Mul),
@@ -131,7 +147,7 @@ pub enum Token {
     Var,
     Loop,
     While,
-    Ident(Rc<String>),
+    Ident(Id),
     Number(u32),
     String(Rc<String>),
     Bool(bool),
@@ -178,7 +194,7 @@ impl Token {
                 }
                 // identifier
                 else {
-                    Self::Ident(Rc::new(token))
+                    Self::Ident(Rc::new(token).into())
                 }
             }
         };
@@ -203,7 +219,6 @@ impl Token {
         Some(sym)
     }
 }
-
 pub struct Tokenizer<'a> {
     code: &'a str,
     code_chars: Peekable<CharIndices<'a>>,
@@ -258,27 +273,21 @@ impl<'a> Iterator for Tokenizer<'a> {
         if sym.is_some() {
             return sym;
         }
-        // try 2 char op
-        if self.code_chars.peek().is_some() {
-            if let Some(op) = Operation::parse(&self.code[start..=(start + 1)]) {
+        if let Some((op, len)) = Operation::from_start(&self.code[start..]) {
+            for _ in 1..len {
                 self.code_chars.next();
-                return Some(Token::Operation(op));
             }
-        }
-        // try 1 char op
-        if let Some(op) = Operation::parse(&self.code[start..=start]) {
             return Some(Token::Operation(op));
         }
-
         let mut end = start;
 
         let is_string = c == '"';
 
-        while let Some((_i, c)) = self.code_chars.peek() {
+        while let Some((i, c)) = self.code_chars.peek() {
             if !is_string
                 && (c.is_whitespace()
                     || Token::symbol(*c).is_some()
-                    || Operation::can_be_operator(*c))
+                    || Operation::from_start(&self.code[*i..]).is_some())
             {
                 break;
             }

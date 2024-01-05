@@ -72,7 +72,7 @@ impl<E: Endian> Program<E> {
 
     pub fn mov_rm8_imm32(&mut self, rm: RM32, disp: i8, imm: u32) -> u32 {
         let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::EAX);
-        self.code.extend_from_slice(&[0x81, modrm32, disp as u8]);
+        self.code.extend_from_slice(&[0xC7, modrm32, disp as u8]);
         let rel = self.addr();
         self.imm32(imm);
         rel
@@ -94,44 +94,8 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0x8B, modrm32]);
     }
 
-    pub fn mov_eax_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xB8);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_ecx_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xB9);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_edx_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xBA);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_ebx_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xBB);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_ebp_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xBD);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_esi_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xBE);
-        let rel = self.addr();
-        self.imm32(imm);
-        rel
-    }
-    pub fn mov_edi_imm32(&mut self, imm: u32) -> u32 {
-        self.code.push(0xBF);
+    pub fn mov_r_imm32(&mut self, reg: Reg32, imm: u32) -> u32 {
+        self.code.push(0xB8 + reg as u8);
         let rel = self.addr();
         self.imm32(imm);
         rel
@@ -193,6 +157,11 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0x81, modrm32]);
         self.imm32(imm);
     }
+    pub fn sub_rm8_imm32(&mut self, rm: RM32, disp: i8, imm: u32) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::EBP);
+        self.code.extend_from_slice(&[0x81, modrm32, disp as u8]);
+        self.imm32(imm);
+    }
     pub fn sub_rm8_r(&mut self, rm: RM32, reg: Reg32, disp: i8) {
         let modrm32 = modrm32(Mod32::Disp08, rm, reg);
         self.code.extend_from_slice(&[0x29, modrm32, disp as u8]);
@@ -236,6 +205,12 @@ impl<E: Endian> Program<E> {
         self.code.push(modrm32);
         self.imm32(imm);
     }
+    pub fn mul_r_rm8_imm32(&mut self, reg: Reg32, rm: RM32, disp: i8, imm: u32) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.push(0x69);
+        self.code.extend_from_slice(&[modrm32, disp as u8]);
+        self.imm32(imm);
+    }
     pub fn mul_r_rm8(&mut self, reg: Reg32, rm: RM32, disp: i8) {
         let modrm32 = modrm32(Mod32::Disp08, rm, reg);
         self.code
@@ -264,8 +239,22 @@ impl<E: Endian> Program<E> {
         self.imm32(imm);
     }
 
-    pub fn push_eax(&mut self) {
-        self.code.push(0x50);
+    pub fn push_imm32(&mut self, imm: u32) -> u32 {
+        self.code.push(0x68);
+        let rel = self.addr();
+        self.imm32(imm);
+        rel
+    }
+    pub fn push_r(&mut self, reg: Reg32) {
+        self.code.push(0x50 + reg as u8);
+    }
+    // pub fn push_rm(&mut self, rm: RM32) {
+    //     let modrm32 = modrm32(Mod32::Direct, rm, Reg32::ESI);
+    //     self.code.extend_from_slice(&[0xFF, modrm32]);
+    // }
+    pub fn push_rm8(&mut self, rm: RM32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::ESI);
+        self.code.extend_from_slice(&[0xFF, modrm32, disp as u8]);
     }
 
     pub fn call_rel32(&mut self, rel: i32) -> u32 {
@@ -354,27 +343,27 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0xCD, 0x80]);
     }
     pub fn exit(&mut self) {
-        self.mov_eax_imm32(0x01); // exit
+        self.mov_r_imm32(Reg32::EAX, 0x01);
         self.syscall();
     }
 
     /// returns a relocation address
-    pub fn write_const(&mut self, addr: u32, size: u32) -> u32 {
-        self.mov_ebx_imm32(0x01); // stdout
-        let rel = self.mov_ecx_imm32(addr); // buf
-        self.mov_edx_imm32(size); // size
-        self.mov_eax_imm32(0x04); // write
-        self.syscall();
-        rel
-    }
+    // pub fn write_const(&mut self, addr: u32, size: u32) -> u32 {
+    //     self.mov_ebx_imm32(0x01); // stdout
+    //     let rel = self.mov_ecx_imm32(addr); // buf
+    //     self.mov_edx_imm32(size); // size
+    //     self.mov_eax_imm32(0x04); // write
+    //     self.syscall();
+    //     rel
+    // }
 
-    pub fn write_rm8(&mut self, rm: RM32, disp: i8, size: u32) {
-        self.mov_ebx_imm32(0x01); // stdout
-        self.mov_r_rm8(Reg32::ECX, rm, disp);
-        self.mov_edx_imm32(size); // size
-        self.mov_eax_imm32(0x04); // write
-        self.syscall();
-    }
+    // pub fn write_rm8(&mut self, rm: RM32, disp: i8, size: u32) {
+    //     self.mov_ebx_imm32(0x01); // stdout
+    //     self.mov_r_rm8(Reg32::ECX, rm, disp);
+    //     self.mov_edx_imm32(size); // size
+    //     self.mov_eax_imm32(0x04); // write
+    //     self.syscall();
+    // }
 
     pub fn string(&mut self, string: &CStr) {
         self.code.extend_from_slice(string.to_bytes_with_nul());

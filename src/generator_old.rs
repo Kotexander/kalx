@@ -1,6 +1,7 @@
-use super::*;
 
-use std::ffi::CString;
+use std::{ffi::CString, rc::Rc, collections::HashMap};
+
+use crate::{tokenizer::{Id, Type, Operation}, analyser_old::AnalysisInfo, program::{RM32, Reg32, Program}, elf::Endian, parser::{Block, Instruction, Expression}};
 
 type RelStr = (Rc<CString>, Vec<u32>);
 pub struct Strings(pub Vec<RelStr>);
@@ -29,27 +30,27 @@ impl Strings {
     }
 }
 
-pub type RelFun = (Rc<String>, Vec<u32>);
+pub type RelFun = (Id, Vec<u32>);
 pub struct Functions(pub Vec<RelFun>);
 impl Functions {
     pub fn new() -> Self {
         Self(vec![])
     }
-    pub fn contains(&self, function: &Rc<String>) -> bool {
+    pub fn contains(&self, function: &Id) -> bool {
         self.0.iter().any(|(f, _)| *f == *function)
     }
-    pub fn add_fun(&mut self, function: &Rc<String>) {
+    pub fn add_fun(&mut self, function: &Id) {
         if !self.contains(function) {
             self.0.push((function.clone(), vec![]));
         }
     }
-    pub fn get_mut(&mut self, function: &Rc<String>) -> Option<&mut Vec<u32>> {
+    pub fn get_mut(&mut self, function: &Id) -> Option<&mut Vec<u32>> {
         self.0
             .iter_mut()
             .find(|(s, _)| *s == *function)
             .map(|(_, x)| x)
     }
-    pub fn add_rel(&mut self, function: &Rc<String>, offset: u32) {
+    pub fn add_rel(&mut self, function: &Id, offset: u32) {
         self.add_fun(function);
         let relfun = self.get_mut(function).unwrap();
         relfun.push(offset);
@@ -69,7 +70,7 @@ impl RelInfo {
 }
 
 // TODO: use array instead of hashmap
-type Vars = HashMap<Rc<String>, (Type, i32)>;
+type Vars = HashMap<Id, (Type, i32)>;
 
 #[derive(Debug, Clone)]
 pub struct AllocInfo {
@@ -243,7 +244,7 @@ pub fn generate_instruction<E: Endian>(
             );
 
             program.cmp_rm_imm32(RM32::EAX, 0);
-            
+
             let jmp_rel = program.jne(rel);
             let end = program.code.len();
             let rel: i8 = (start as i32 - end as i32).try_into().unwrap();
@@ -333,6 +334,7 @@ fn generate_simple_expr<E: Endian>(
                     program.set_le(register.into());
                     program.movzx(register.into(), register.into());
                 }
+                Operation::EQL => todo!(),
                 Operation::And => todo!(),
                 Operation::Or_ => todo!(),
                 Operation::BND => todo!(),
@@ -366,7 +368,7 @@ fn generate_simple_expr<E: Endian>(
                     Operation::Div => {
                         panic!("division is not a simple operation in x86");
                     }
-
+                    Operation::EQL => todo!(),
                     Operation::GTC => todo!(),
                     Operation::LTC => todo!(),
                     Operation::GTE => todo!(),
@@ -445,7 +447,7 @@ fn generate_complex_expr<E: Endian>(
         }
         Expression::Index { expr: _, index: _ } => todo!(),
         Expression::Function { name, args } => {
-            match name.as_str() {
+            match name.0.as_str() {
                 "exit" => {
                     generate_expr(
                         program,

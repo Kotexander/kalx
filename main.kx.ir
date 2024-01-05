@@ -1,0 +1,24 @@
+{
+	var x: u32
+	var y: u32
+	var z: u32
+	var zdecl: str
+
+	x = 10;
+	
+	y = 5;
+	
+	_0 = y + 1;
+	_0 = _0 * 5;
+	_0 = _0 * x;
+	z = _0 * y;
+	
+	zdecl = "z = %u\n";
+	
+	printf(zdecl, z);
+	
+	_0 = x + y;
+	exit(_0);
+	
+}
+

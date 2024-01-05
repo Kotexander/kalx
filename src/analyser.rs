@@ -1,9 +1,33 @@
-use super::*;
+use std::rc::Rc;
 
-#[derive(Debug, Clone)]
-pub struct DeclaredVar {
-    pub typ: Type,
-}
+use crate::{
+    parser::{Block, DeclaredVars, Expression, Instruction},
+    tokenizer::{Id, Type},
+};
+
+// #[derive(Debug, Clone)]
+// pub struct DeclaredVars(Vec<(Id, Type)>);
+// impl DeclaredVars {
+//     fn new() -> Self {
+//         Self(vec![])
+//     }
+//     fn get(&self, id: &Id) -> Option<Type> {
+//         self.0
+//             .iter()
+//             .rev()
+//             .find_map(|(vars_id, typ)| if *vars_id == *id { Some(*typ) } else { None })
+//     }
+//     fn contains(&self, id: &Id) -> bool {
+//     self.0.iter().rev().any(|(var_id, _)| *var_id == *id)
+//     }
+//     fn add(&mut self, id: Id, typ: Type) {
+//         // if self.contains(&id) {
+//         // panic!("Vars already has `{id}` of type `{typ}`");
+//         // }
+//         self.0.push((id, typ))
+//     }
+// }
+
 #[derive(Debug, Clone)]
 pub enum ArgLayout {
     List(Vec<Type>),
@@ -17,10 +41,11 @@ impl ArgLayout {
         }
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct DeclaredFun {
-    pub args: ArgLayout,
-    pub ret: Type,
+    args: ArgLayout,
+    ret: Type,
 }
 impl DeclaredFun {
     fn args_match(&self, args: &[Type]) -> bool {
@@ -39,66 +64,10 @@ impl DeclaredFun {
 }
 
 #[derive(Debug, Clone)]
-pub struct TempVar(pub Vec<(Type, usize)>);
-impl TempVar {
+pub struct DeclaredFuns(Vec<(Id, DeclaredFun)>);
+impl DeclaredFuns {
     fn new() -> Self {
-        Self(vec![])
-    }
-    fn get(&self, typ: &Type) -> Option<usize> {
-        self.0.iter().find_map(|(t, n)| if *t == *typ {Some(*n)} else {None})
-
-    }
-    fn get_mut(&mut self, typ: &Type) -> Option<&mut usize> {
-        self.0.iter_mut().find_map(|(t, n)| if *t == *typ {Some(n)} else {None})
-    }
-    fn add(&mut self, typ: Type) {
-        self.add_num(typ, 1);
-    }
-    fn add_num(&mut self, typ: Type, num: usize) {
-        match self.get_mut(&typ) {
-            Some(n) => {
-                *n += num;
-            }
-            None => {
-                self.0.push((typ, num));
-            }
-        }
-    }
-    fn merge(&self, other: &Self) -> Self {
-        let mut types = vec![];
-        for (typ, _) in self.0.iter() {
-            if !types.contains(typ) {
-                types.push(*typ);
-            }
-        }
-        for (typ, _) in other.0.iter() {
-            if !types.contains(typ) {
-                types.push(*typ);
-            }
-        }
-
-        let mut result = Self::new();
-        for typ in types {
-            let num1 = self.get(&typ).unwrap_or(0);
-            let num2 = other.get(&typ).unwrap_or(0);
-            let num = num1.max(num2);
-            assert!(num != 0, "number of types should not equal 0");
-            result.0.push((typ, num));
-        }
-
-        result
-    }
-}
-#[derive(Debug, Clone)]
-pub struct AnalysisInfo {
-    pub declared_vars: HashMap<Rc<String>, DeclaredVar>,
-    pub declared_funs: HashMap<Rc<String>, DeclaredFun>,
-    pub temp_vars: TempVar,
-}
-impl AnalysisInfo {
-    pub fn new() -> Self {
-        let declared_vars = HashMap::new();
-        let mut declared_funs = HashMap::new();
+        let mut funs = vec![];
         let printf = DeclaredFun {
             args: ArgLayout::Variable(vec![Type::String]),
             ret: Type::Void,
@@ -107,47 +76,70 @@ impl AnalysisInfo {
             args: ArgLayout::List(vec![Type::U32]),
             ret: Type::Void,
         };
-        declared_funs.insert(Rc::new(String::from("printf")), printf);
-        declared_funs.insert(Rc::new(String::from("exit")), exit);
+        funs.push((Rc::new(String::from("printf")).into(), printf));
+        funs.push((Rc::new(String::from("exit")).into(), exit));
 
-        let temp_vars = TempVar::new();
-        Self {
-            declared_vars,
-            declared_funs,
-            temp_vars,
+        Self(funs)
+    }
+    fn get(&self, id: &Id) -> Option<&DeclaredFun> {
+        self.0.iter().find_map(
+            |(fun_id, fun)| {
+                if *fun_id == *id {
+                    Some(fun)
+                } else {
+                    None
+                }
+            },
+        )
+    }
+}
+
+struct AllVars<'a> {
+    vars: Vec<&'a DeclaredVars>,
+}
+impl<'a> AllVars<'a> {
+    fn new() -> Self {
+        Self { vars: vec![] }
+    }
+    fn get(&self, id: &Id) -> Option<Type> {
+        for vars in self.vars.iter().rev() {
+            let typ = vars.get(id);
+            if typ.is_some() {
+                return typ;
+            }
         }
+        None
+    }
+    fn contains(&self, id: &Id) -> bool {
+        for vars in self.vars.iter().rev() {
+            if vars.contains(id) {
+                return true;
+            }
+        }
+        false
+    }
+    fn extend(&'a self, vars: &'a DeclaredVars) -> Self {
+        let mut all_vars = self.vars.clone();
+        all_vars.push(vars);
+        Self { vars: all_vars }
     }
 }
 
-pub fn analyse(block: &Block) -> Result<AnalysisInfo, String> {
-    let mut info = AnalysisInfo::new();
-    let mut largest_temp = info.temp_vars.clone();
-    for instruction in block.0.iter() {
-        info.temp_vars.0.clear();
-        analyse_instruction(instruction, &mut info)?;
-        largest_temp = largest_temp.merge(&info.temp_vars);
-    }
-    info.temp_vars = largest_temp;
-    Ok(info)
-}
-
-pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, String> {
+fn analyse_expr(
+    expr: &Expression,
+    funs: &DeclaredFuns,
+    all_vars: &AllVars<'_>,
+) -> Result<Type, String> {
     match expr {
         Expression::Number(_) => Ok(Type::U32),
-        Expression::String(_string) => {
-            // strings.add(string);
-            Ok(Type::String)
-        }
-        Expression::Ident(id) => match info.declared_vars.get(id) {
-            Some(dec) => Ok(dec.typ),
+        Expression::String(_string) => Ok(Type::String),
+        Expression::Ident(id) => match all_vars.get(id) {
+            Some(typ) => Ok(typ),
             None => Err(format!("undefined variable `{id}`")),
         },
         Expression::Operation { lhs, op, rhs } => {
-            let lhs_type = analyse_expr(lhs, info)?;
-            let rhs_type = analyse_expr(rhs, info)?;
-            if rhs.is_recursive() {
-                info.temp_vars.add(lhs_type);
-            }
+            let lhs_type = analyse_expr(lhs, funs, all_vars)?;
+            let rhs_type = analyse_expr(rhs, funs, all_vars)?;
 
             if lhs_type == rhs_type {
                 let typ = if op.is_comparator() {
@@ -163,8 +155,8 @@ pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, 
             }
         }
         Expression::Index { expr, index } => {
-            let typ = analyse_expr(expr, info)?;
-            let i = analyse_expr(index, info)?;
+            let typ = analyse_expr(expr, funs, all_vars)?;
+            let i = analyse_expr(index, funs, all_vars)?;
 
             if i == Type::U32 {
                 Ok(typ)
@@ -175,74 +167,88 @@ pub fn analyse_expr(expr: &Expression, info: &mut AnalysisInfo) -> Result<Type, 
         Expression::Function { name, args } => {
             let mut arg_typs = vec![];
             for expr in args.iter() {
-                let typ = analyse_expr(expr, info)?;
+                let typ = analyse_expr(expr, funs, all_vars)?;
                 arg_typs.push(typ);
             }
-            match info.declared_funs.get(name) {
+            match funs.get(name) {
                 Some(fun) => {
                     if !fun.args_match(&arg_typs) {
-                        return Err(format!(
+                        Err(format!(
                             "function `{name}` expects `{:?}` but got `{:?}`",
                             fun.args, args
-                        ));
+                        ))
+                    } else {
+                        Ok(fun.ret)
                     }
                 }
-                None => {
-                    return Err(format!("unkown function `{name}`"));
-                }
+                None => Err(format!("unkown function `{name}`")),
             }
-            Ok(Type::Void)
         }
     }
 }
 
-pub fn analyse_block(block: &Block, info: &mut AnalysisInfo) -> Result<(), String> {
-    for instruction in block.0.iter() {
-        analyse_instruction(instruction, info)?;
-    }
-    Ok(())
-}
-
-pub fn analyse_instruction(
-    instruction: &Instruction,
-    info: &mut AnalysisInfo,
+fn analyse_instruction(
+    instruction: &mut Instruction,
+    funs: &DeclaredFuns,
+    all_vars: &AllVars<'_>,
+    vars: &mut DeclaredVars,
 ) -> Result<(), String> {
+    let all_vars = all_vars.extend(vars);
     match instruction {
         Instruction::Declare { id, value } => {
-            if !info.declared_vars.contains_key(id) {
-                let typ = analyse_expr(value, info)?;
+            if !all_vars.contains(id) {
+                let typ = analyse_expr(value, funs, &all_vars)?;
                 if typ == Type::Void {
                     Err(format!("can't declare `{id}` as having type of `void`"))
                 } else {
-                    info.declared_vars.insert(id.clone(), DeclaredVar { typ });
+                    vars.add(id.clone(), typ);
                     Ok(())
                 }
             } else {
-                Err(format!("duplicate declaration of `{id}`"))
+                Err(format!(
+                    "variable `{id}` is defined multiple times in the same scope"
+                ))
             }
         }
         Instruction::Assign { id, value } => {
-            if info.declared_vars.contains_key(id) {
-                analyse_expr(value, info)?;
+            if all_vars.contains(id) {
+                analyse_expr(value, funs, &all_vars)?;
                 Ok(())
             } else {
                 Err(format!("assignment of `{id}` before declaration"))
             }
         }
         Instruction::Expr(expr) => {
-            analyse_expr(expr, info)?;
+            analyse_expr(expr, funs, &all_vars)?;
             Ok(())
         }
-        Instruction::Loop(block) => analyse_block(block, info),
+        Instruction::Loop(block) => analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars),
         Instruction::While { expr, block } => {
-            let typ = analyse_expr(expr, info)?;
+            let typ = analyse_expr(expr, funs, &all_vars)?;
             if typ != Type::Bool {
                 return Err(format!("while loop expects type `bool` by got `{typ}`"));
             }
-            for instruction in block.0.iter() {
-                analyse_instruction(instruction, info)?;
-            }
-            Ok(())
+            analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars)
         }
+        Instruction::Block(block) => analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars),
     }
+}
+
+fn analyse_block(
+    block: &mut Block,
+    funs: &DeclaredFuns,
+    all_vars: &AllVars<'_>,
+) -> Result<(), String> {
+    let mut vars = DeclaredVars::new();
+    for instruction in block.instructions.iter_mut() {
+        analyse_instruction(Rc::get_mut(instruction).unwrap(), funs, all_vars, &mut vars)?;
+    }
+    block.vars = vars;
+    Ok(())
+}
+
+pub fn analyse(block: &mut Block) -> Result<(), String> {
+    let funs = DeclaredFuns::new();
+    let all_vars = AllVars::new();
+    analyse_block(block, &funs, &all_vars)
 }

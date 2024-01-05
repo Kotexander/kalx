@@ -1,15 +1,54 @@
 use std::{ffi::CString, fmt::Display, rc::Rc};
 
-use super::tokenizer::*;
+use crate::tokenizer::{Id, Operation, Token, Tokenizer, Type};
 
 #[derive(Debug, Clone)]
-pub struct Block(pub Vec<Rc<Instruction>>);
+pub struct DeclaredVars(pub Vec<(Id, Type)>);
+impl DeclaredVars {
+    pub fn new() -> Self {
+        Self(vec![])
+    }
+    pub fn get(&self, id: &Id) -> Option<Type> {
+        self.0
+            .iter()
+            .rev()
+            .find_map(|(vars_id, typ)| if *vars_id == *id { Some(*typ) } else { None })
+    }
+    pub fn contains(&self, id: &Id) -> bool {
+        self.0.iter().rev().any(|(var_id, _)| *var_id == *id)
+    }
+    pub fn add(&mut self, id: Id, typ: Type) {
+        if self.contains(&id) {
+            panic!("Vars already has `{id}` of type `{typ}`");
+        }
+        self.0.push((id, typ))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub vars: DeclaredVars,
+    pub instructions: Vec<Rc<Instruction>>,
+}
+
+impl Block {
+    pub fn new() -> Self {
+        Self {
+            instructions: vec![],
+            vars: DeclaredVars::new(),
+        }
+    }
+}
 impl Display for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{{")?;
-        for instruction in self.0.iter() {
+        // writeln!()
+        for (id, typ) in self.vars.0.iter() {
+            writeln!(f, "\t// var {id}: {typ}")?;
+        }
+        for instruction in self.instructions.iter() {
             let instruction = format!("{instruction}");
-            for line in instruction.lines() {
+            for line in instruction.split('\n') {
                 writeln!(f, "\t{line}")?;
             }
         }
@@ -20,18 +59,19 @@ impl Display for Block {
 #[derive(Debug, Clone)]
 pub enum Instruction {
     Declare {
-        id: Rc<String>,
+        id: Id,
         value: Rc<Expression>,
     },
     Assign {
-        id: Rc<String>,
+        id: Id,
         value: Rc<Expression>,
     },
     Expr(Rc<Expression>),
-    Loop(Block),
+    Block(Rc<Block>),
+    Loop(Rc<Block>),
     While {
         expr: Rc<Expression>,
-        block: Block,
+        block: Rc<Block>,
     },
 }
 impl Display for Instruction {
@@ -42,6 +82,7 @@ impl Display for Instruction {
             Instruction::Expr(expr) => write!(f, "{expr};"),
             Instruction::Loop(block) => write!(f, "loop\n{block}"),
             Instruction::While { expr, block } => write!(f, "while {expr}\n{block}"),
+            Instruction::Block(block) => write!(f, "{block}"),
         }
     }
 }
@@ -49,7 +90,7 @@ impl Display for Instruction {
 pub enum Expression {
     Number(u32),
     String(Rc<CString>),
-    Ident(Rc<String>),
+    Ident(Id),
     Operation {
         lhs: Rc<Expression>,
         op: Operation,
@@ -60,20 +101,27 @@ pub enum Expression {
         index: Rc<Expression>,
     },
     Function {
-        name: Rc<String>,
+        name: Id,
         args: Vec<Rc<Expression>>,
     },
 }
 impl Expression {
     pub fn is_recursive(&self) -> bool {
-        match self {
-            Expression::Number(_) => false,
-            Expression::String(_) => false,
-            Expression::Ident(_) => false,
-            Expression::Operation { .. } => true,
-            Expression::Index { .. } => true,
-            Expression::Function { .. } => true,
-        }
+        // match self {
+        //     Expression::Number(_) => false,
+        //     Expression::String(_) => false,
+        //     Expression::Ident(_) => false,
+        //     Expression::Operation { .. } => true,
+        //     Expression::Index { .. } => true,
+        //     Expression::Function { .. } => true,
+        // }
+        matches!(
+            self,
+            Expression::Operation { .. } | Expression::Index { .. } | Expression::Function { .. }
+        )
+    }
+    pub fn is_const(&self) -> bool {
+        matches!(self, Expression::Number(_))
     }
 }
 impl Display for Expression {
@@ -86,11 +134,12 @@ impl Display for Expression {
             Expression::Index { expr, index } => write!(f, "{expr}[{index}]"),
             Expression::Function { name, args } => {
                 if !args.is_empty() {
+                    let last = args.len() - 1;
                     write!(f, "{name}(")?;
-                    for arg in args[..args.len() - 1].iter() {
+                    for arg in args[..last].iter() {
                         write!(f, "{arg}, ")?;
                     }
-                    write!(f, "{})", args[args.len() - 1])
+                    write!(f, "{})", args[last])
                 } else {
                     write!(f, "{name}()")
                 }
@@ -103,11 +152,11 @@ impl Display for Expression {
 #[allow(clippy::upper_case_acronyms)]
 pub enum AST {
     Instruction(Rc<Instruction>),
-    Block(Block),
+    Block(Rc<Block>),
     Expression(Rc<Expression>),
 }
-impl From<Block> for AST {
-    fn from(value: Block) -> Self {
+impl From<Rc<Block>> for AST {
+    fn from(value: Rc<Block>) -> Self {
         Self::Block(value)
     }
 }
@@ -163,20 +212,20 @@ fn parse_block(nodes: &mut Nodes) -> bool {
     // block end
     if let Node::Token(Token::BClose) = nodes.0[last] {
         let mut i = last - 1;
-        let mut instructions = Block(vec![]);
+        let mut block = Block::new();
         loop {
             match &nodes.0[i] {
                 // block start
                 Node::Token(Token::BOpen) => {
-                    instructions.0.reverse();
-                    let node: AST = instructions.into();
+                    block.instructions.reverse();
+                    let node: AST = Rc::new(block).into();
                     nodes.reduce(last - i + 1);
                     nodes.push(node);
                     return true;
                 }
                 // instruction
                 Node::AST(AST::Instruction(instruction)) => {
-                    instructions.0.push(instruction.clone());
+                    block.instructions.push(instruction.clone());
                 }
                 Node::Token(Token::BClose) => {
                     // panic!();
@@ -258,7 +307,7 @@ fn parse_function(nodes: &mut Nodes) -> bool {
 // use Token::*;
 // use Node::*;
 // use AST::*;
-pub fn parse(code: &str) -> Result<Block, String> {
+pub fn parse(code: &str) -> Result<Rc<Block>, String> {
     let mut tokenizer = Tokenizer::new(code).peekable();
 
     let mut nodes = Nodes::new();
@@ -368,7 +417,7 @@ pub fn parse(code: &str) -> Result<Block, String> {
                     }
                     // empty block
                     [.., Node::Token(Token::BOpen), Node::Token(Token::BClose)] => {
-                        let node: AST = Block(vec![]).into();
+                        let node: AST = Rc::new(Block::new()).into();
                         nodes.reduce(2);
                         nodes.push(node);
                         true
@@ -399,6 +448,17 @@ pub fn parse(code: &str) -> Result<Block, String> {
                         nodes.reduce(2);
                         nodes.push(node);
                         true
+                    }
+                    // block -> expr
+                    [.., Node::AST(AST::Block(block))] => {
+                        if tokenizer.peek().is_some() {
+                            let node: AST = Rc::new(Instruction::Block(block.clone())).into();
+                            nodes.reduce(1);
+                            nodes.push(node);
+                            true
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 }

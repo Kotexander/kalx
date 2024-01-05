@@ -1,21 +1,20 @@
 mod elf;
 
-use std::{collections::HashMap, process::exit, rc::Rc};
+use std::{process::exit, rc::Rc};
 
 use elf::*;
 
-mod program;
-use program::*;
+mod x86_program;
+use x86_program::*;
 mod tokenizer;
-use tokenizer::*;
-mod parser;
-use parser::*;
+// use tokenizer::*;
 mod optimizer;
-use optimizer::*;
+mod parser;
+// mod analyser_old;
 mod analyser;
-use analyser::*;
-mod generator;
-use generator::*;
+mod ir;
+// mod generator_old;
+mod x86_generator;
 
 struct ProcessedStrSymbol {
     name: String,
@@ -26,7 +25,7 @@ struct ProcessedStrs {
     data: Vec<u8>,
     symbols: Vec<ProcessedStrSymbol>,
 }
-fn process_strs(strs: Strings) -> ProcessedStrs {
+fn process_strs(strs: x86_generator::Strings) -> ProcessedStrs {
     let data = strs
         .0
         .iter()
@@ -60,30 +59,20 @@ fn run<E: Endian>() -> Result<(), String> {
     let _ = std::fs::remove_file("output/main");
     let code = std::fs::read_to_string("main.kx").unwrap();
 
-    let mut block = parse(&code)?;
-    optimize_block(&mut block);
+    let mut block = Rc::into_inner(parser::parse(&code)?).unwrap();
+    optimizer::optimize(&mut block);
+    analyser::analyse(&mut block)?;
     let _ = std::fs::write("main.kx.reformatted", format!("{block}"));
 
-    let info = analyse(&block)?;
-    // dbg!(&info);
-    let alloc_info = generate_info(info);
-    // dbg!(&alloc_info);
+    let ir_code = ir::generate(block);
+    let _ = std::fs::write("main.kx.ir", format!("{ir_code}"));
+
+    // let info = analyser_old::analyse(&block)?;
+    // let alloc_info = generator_old::generate_info(info);
 
     let mut text = Program::<E>::new();
 
-    // setup stack
-    text.mov_edp_esp();
-    text.sub_esp_imm8(alloc_info.alloc.unsigned_abs().try_into().unwrap());
-
-    let mut rel_info = RelInfo::new();
-    generate_block(
-        &mut text,
-        &block,
-        &alloc_info.vars,
-        &mut rel_info,
-        TempInfo::new(alloc_info.temp_start),
-    );
-    text.mov_esp_edp();
+    let rel_info = x86_generator::generate(&mut text, &ir_code);
 
     let processed_strs = process_strs(rel_info.strs);
 
@@ -170,13 +159,14 @@ fn run<E: Endian>() -> Result<(), String> {
             ..Default::default()
         },
     );
+
     let fun_rel: Vec<_> = rel_info
         .funs
         .0
         .into_iter()
         .map(|(name, rels)| {
             let i = sym_table.add(
-                &name,
+                &name.0,
                 SymbolEntry::<E> {
                     info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
                     shndx: U16::new(0),

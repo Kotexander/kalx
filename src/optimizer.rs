@@ -1,6 +1,9 @@
-use std::mem::swap;
+use std::{mem::swap, rc::Rc};
 
-use super::*;
+use crate::{
+    parser::{Block, Expression, Instruction},
+    tokenizer::Operation,
+};
 
 fn try_combine(lhs: &Expression, op: &Operation, rhs: &Expression) -> Option<Expression> {
     if let (Expression::Number(lhs), Expression::Number(rhs)) = (lhs, rhs) {
@@ -11,6 +14,7 @@ fn try_combine(lhs: &Expression, op: &Operation, rhs: &Expression) -> Option<Exp
             Operation::LTE => todo!(),
             Operation::And => todo!(),
             Operation::Or_ => todo!(),
+            Operation::EQL => todo!(),
             Operation::BND => Expression::Number(lhs & rhs),
             Operation::BOR => Expression::Number(lhs | rhs),
             Operation::Add => Expression::Number(lhs + rhs),
@@ -48,6 +52,9 @@ pub fn optimize_expr(expr: &mut Expression) -> Option<Expression> {
                 if !lhs.is_recursive() && rhs.is_recursive() {
                     swap(lhs, rhs);
                 }
+                if lhs.is_const() {
+                    swap(lhs, rhs);
+                }
             }
 
             None
@@ -75,17 +82,18 @@ pub fn optimize_instruction(instruction: &mut Instruction) {
             optimize_expr_and_replace(expr);
         }
         Instruction::Loop(block) => {
-            optimize_block(block);
+            optimize(Rc::get_mut(block).unwrap());
         }
         Instruction::While { expr, block } => {
             optimize_expr_and_replace(expr);
-            optimize_block(block);
+            optimize(Rc::get_mut(block).unwrap());
         }
+        Instruction::Block(block) => optimize(Rc::get_mut(block).unwrap()),
     }
 }
 
-pub fn optimize_block(block: &mut Block) {
-    for instuction in block.0.iter_mut() {
+pub fn optimize(block: &mut Block) {
+    for instuction in block.instructions.iter_mut() {
         optimize_instruction(Rc::get_mut(instuction).unwrap());
     }
 }
