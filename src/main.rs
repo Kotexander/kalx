@@ -67,13 +67,8 @@ fn run<E: Endian>() -> Result<(), String> {
     let ir_code = ir::generate(block);
     let _ = std::fs::write("main.kx.ir", format!("{ir_code}"));
 
-    // let info = analyser_old::analyse(&block)?;
-    // let alloc_info = generator_old::generate_info(info);
-
     let mut text = Program::<E>::new();
-
     let rel_info = x86_generator::generate(&mut text, &ir_code);
-
     let processed_strs = process_strs(rel_info.strs);
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;

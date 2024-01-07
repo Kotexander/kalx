@@ -12,11 +12,6 @@ pub enum Value {
     Num(u32),
     String(Rc<CString>),
 }
-// impl Value {
-//     fn is_temp(&self) -> bool {
-//         matches!(self, Value::Temp(_))
-//     }
-// }
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -45,7 +40,7 @@ pub enum Instruction {
     },
     Block {
         decl_vars: DeclaredVars,
-        code: IRCode,
+        code: Code,
     },
 }
 impl Display for Instruction {
@@ -93,26 +88,13 @@ impl Display for Instruction {
 }
 
 #[derive(Debug, Clone)]
-pub struct InstructionGroup(pub Vec<Instruction>);
-impl Display for InstructionGroup {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for instruction in self.0.iter() {
-            writeln!(f, "{instruction}")?;
-        }
-        std::fmt::Result::Ok(())
-    }
-}
-#[derive(Debug, Clone)]
-pub struct IRCode(pub Vec<InstructionGroup>);
-impl IRCode {
+pub struct Code(pub Vec<Instruction>);
+impl Code {
     fn new() -> Self {
         Self(vec![])
     }
-    fn push_instruction(&mut self, instruction: Instruction) {
-        self.0.push(InstructionGroup(vec![instruction]));
-    }
 }
-impl Display for IRCode {
+impl Display for Code {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for instruction_group in self.0.iter() {
             writeln!(f, "{instruction_group}")?;
@@ -121,21 +103,17 @@ impl Display for IRCode {
     }
 }
 
-fn generate_temp_expr(
-    code: &mut InstructionGroup,
-    expr: &parser::Expression,
-    temp: &mut u32,
-) -> Value {
+fn generate_temp_expr(code: &mut Code, expr: &parser::Expression, temp: &mut u32) -> Value {
     match expr {
         parser::Expression::Number(num) => Value::Num(*num),
         parser::Expression::String(string) => Value::String(string.clone()),
         parser::Expression::Ident(id) => Value::Id(id.clone()),
         parser::Expression::Operation { lhs, op, rhs } => {
-            let value = Value::Temp(*temp);
             let lhs_value = generate_temp_expr(code, lhs, temp);
-            *temp += 1;
             let rhs_value = generate_temp_expr(code, rhs, temp);
-
+            
+            let value = Value::Temp(*temp);
+            *temp += 1;
             code.0.push(Instruction::Op {
                 target: value.clone(),
                 lhs: lhs_value,
@@ -151,82 +129,80 @@ fn generate_temp_expr(
     }
 }
 
-fn generate_expr(code: &mut IRCode, expr: &parser::Expression, target: Value) {
-    let mut temp = 0;
+fn generate_expr(code: &mut Code, expr: &parser::Expression, target: Value, temp: &mut u32) {
     match expr {
         parser::Expression::Number(num) => {
-            code.push_instruction(Instruction::Assign {
+            code.0.push(Instruction::Assign {
                 target,
                 value: Value::Num(*num),
             });
         }
         parser::Expression::String(string) => {
-            code.push_instruction(Instruction::Assign {
+            code.0.push(Instruction::Assign {
                 target,
                 value: Value::String(string.clone()),
             });
         }
         parser::Expression::Ident(id) => {
-            code.push_instruction(Instruction::Assign {
+            code.0.push(Instruction::Assign {
                 target,
                 value: Value::Id(id.clone()),
             });
         }
         parser::Expression::Operation { lhs, op, rhs } => {
-            let mut group = InstructionGroup(vec![]);
-            let lhs_value = generate_temp_expr(&mut group, lhs, &mut temp);
-            let rhs_value = generate_temp_expr(&mut group, rhs, &mut temp);
-            group.0.push(Instruction::Op {
+            let lhs_value = generate_temp_expr(code, lhs, temp);
+            let rhs_value = generate_temp_expr(code, rhs, temp);
+            code.0.push(Instruction::Op {
                 target,
                 lhs: lhs_value,
                 op: *op,
                 rhs: rhs_value,
             });
-            code.0.push(group);
         }
         parser::Expression::Index { expr: _, index: _ } => todo!(),
         parser::Expression::Function { name, args } => {
-            let mut group = InstructionGroup(vec![]);
-
             let mut arg_values = vec![];
             for arg in args.iter() {
-                arg_values.push(generate_temp_expr(&mut group, arg, &mut temp));
+                arg_values.push(generate_temp_expr(code, arg, temp));
             }
 
-            group.0.push(Instruction::Function {
+            code.0.push(Instruction::Function {
                 name: name.clone(),
                 args: arg_values,
             });
-            code.0.push(group);
         }
     }
 }
 
-fn generate_instruction(code: &mut IRCode, instruction: parser::Instruction) {
+fn generate_instruction(code: &mut Code, instruction: parser::Instruction, temp: &mut u32) {
     match instruction {
         parser::Instruction::Declare { id, value } | parser::Instruction::Assign { id, value } => {
-            generate_expr(code, &value, Value::Id(id.clone()))
+            generate_expr(code, &value, Value::Id(id.clone()), temp);
         }
-        parser::Instruction::Expr(expr) => generate_expr(code, &expr, Value::Temp(0)),
+        parser::Instruction::Expr(expr) => {
+            generate_expr(code, &expr, Value::Temp(0), temp);
+        }
         parser::Instruction::Loop(_) => todo!(),
         parser::Instruction::While { expr: _, block: _ } => todo!(),
-        parser::Instruction::Block(block) => generate_block(code, Rc::into_inner(block).unwrap()),
+        parser::Instruction::Block(block) => {
+            generate_block(code, Rc::into_inner(block).unwrap(), temp);
+        }
     }
 }
 
-fn generate_block(code: &mut IRCode, block: Block) {
-    let mut block_code = IRCode::new();
+fn generate_block(code: &mut Code, block: Block, temp: &mut u32) {
+    let mut block_code = Code::new();
     for instruction in block.instructions.into_iter() {
-        generate_instruction(&mut block_code, Rc::into_inner(instruction).unwrap());
+        generate_instruction(&mut block_code, Rc::into_inner(instruction).unwrap(), temp);
     }
-    code.push_instruction(Instruction::Block {
+    code.0.push(Instruction::Block {
         decl_vars: block.vars,
         code: block_code,
     });
 }
 
-pub fn generate(block: Block) -> IRCode {
-    let mut code = IRCode::new();
-    generate_block(&mut code, block);
+pub fn generate(block: Block) -> Code {
+    let mut code = Code::new();
+    generate_block(&mut code, block, &mut 0);
     code
 }

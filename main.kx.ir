@@ -1,24 +1,39 @@
 {
+	var hello: str
+	var bye: str
+	var a: u32
+	var b: u32
+	var c: u32
+	var abc: u32
+	var cdecl: str
+	var w: u32
 	var x: u32
 	var y: u32
 	var z: u32
 	var zdecl: str
 
+	hello = "Hello world!";
+	bye = "Goodbye world!\n";
+	printf("%s\n", hello);
+	printf(bye);
+	a = 3;
+	b = 5;
+	c = a + b;
+	_0 = a * c;
+	_1 = b * c;
+	abc = _0 + _1;
+	printf("abc = %u\n", abc);
+	cdecl = "c = %u\n";
+	printf(cdecl, c);
+	w = 5310;
+	printf("w = %u\n", w);
 	x = 10;
-	
 	y = 5;
-	
-	_0 = y + 1;
-	_0 = _0 * 5;
-	_0 = _0 * x;
-	z = _0 * y;
-	
+	_2 = y + 1;
+	_3 = _2 * 5;
+	_4 = _3 * x;
+	z = _4 * y;
 	zdecl = "z = %u\n";
-	
 	printf(zdecl, z);
-	
-	_0 = x + y;
-	exit(_0);
-	
+	exit(0);
 }
-

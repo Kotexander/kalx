@@ -2,7 +2,7 @@ use std::{ffi::CString, rc::Rc};
 
 use crate::{
     elf::Endian,
-    ir::{IRCode, Instruction, InstructionGroup, Value},
+    ir::{Code, Instruction, Value},
     parser::DeclaredVars,
     tokenizer::{Id, Operation},
     x86_program::{Program, Reg32, RM32},
@@ -147,22 +147,22 @@ impl Into<Reg32> for Register {
     }
 }
 
-struct TempLocations(Vec<Register>);
-impl TempLocations {
-    fn new() -> Self {
-        Self(vec![Register::ECX])
-    }
-    fn get(&mut self, temp: u32) -> Register {
-        match self.0.get(temp as usize) {
-            Some(reg) => *reg,
-            None => {
-                let reg = self.0.last().unwrap().next();
-                self.0.push(reg);
-                reg
-            }
-        }
-    }
-}
+// struct TempLocations(Vec<Register>);
+// impl TempLocations {
+//     fn new() -> Self {
+//         Self(vec![Register::ECX])
+//     }
+//     fn get(&mut self, temp: u32) -> Register {
+//         match self.0.get(temp as usize) {
+//             Some(reg) => *reg,
+//             None => {
+//                 let reg = self.0.last().unwrap().next();
+//                 self.0.push(reg);
+//                 reg
+//             }
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Term {
@@ -174,14 +174,14 @@ impl Term {
     fn is_location(&self) -> bool {
         matches!(self, Self::Reg(_) | Self::Stack(_))
     }
-    fn from_value(value: &Value, vars: &Vars, temp: &mut TempLocations) -> Self {
+    fn from_value(value: &Value, vars: &Vars, temp: &TempMap) -> Self {
         match value {
             Value::Id(id) => {
                 let disp = vars.get(id).unwrap();
                 Self::Stack(disp)
             }
             Value::Temp(t) => {
-                let reg = temp.get(*t);
+                let reg = temp.get(t);
                 Self::Reg(reg)
             }
             Value::Num(num) => Self::Imm(*num),
@@ -340,11 +340,11 @@ fn op_t_t_t<E: Endian>(
 fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
-    start: &mut i32,
+    alloc_end: i32,
     vars: &Vars,
+    temps: &TempMap,
     rel_info: &mut RelInfo,
 ) {
-    let mut temp = TempLocations::new();
     match instruction {
         Instruction::Assign { target, value } => match target {
             Value::Id(id) => {
@@ -376,10 +376,10 @@ fn generate_instruction<E: Endian>(
             // TODO: possible optimizations like worrying less about preservering temps for last instruction
             op_t_t_t(
                 program,
-                Term::from_value(target, vars, &mut temp),
-                Term::from_value(lhs, vars, &mut temp),
+                Term::from_value(target, vars, temps),
+                Term::from_value(lhs, vars, temps),
                 op,
-                Term::from_value(rhs, vars, &mut temp),
+                Term::from_value(rhs, vars, temps),
             )
         }
         Instruction::Function { name, args } => {
@@ -391,7 +391,7 @@ fn generate_instruction<E: Endian>(
                             program.mov_r_rm8(Reg32::EBX, RM32::EBP, offset.try_into().unwrap());
                         }
                         Value::Temp(t) => {
-                            let reg = temp.get(*t);
+                            let reg = temps.get(t);
                             program.mov_rm_r(RM32::EBX, reg.into());
                             // program.mov_r_rm(Reg32::EDX, reg.into());
                         }
@@ -412,7 +412,7 @@ fn generate_instruction<E: Endian>(
                                 program.push_rm8(RM32::EBP, disp.try_into().unwrap());
                             }
                             Value::Temp(t) => {
-                                let reg = temp.get(*t);
+                                let reg = temps.get(t);
                                 program.push_r(reg.into());
                             }
                             Value::Num(num) => {
@@ -432,93 +432,146 @@ fn generate_instruction<E: Endian>(
             }
         }
         Instruction::Block { decl_vars, code } => {
-            let old_start = *start;
-            let mut new_vars = Vars::alloc_vars(decl_vars, start);
+            // let old_start = *alloc_end;
+            let mut end = alloc_end;
+            let mut new_vars = Vars::alloc_vars(decl_vars, &mut end);
             new_vars.add(vars);
-            generate_ir(program, code, start, &new_vars, rel_info);
-            *start = old_start;
+            generate_ir(program, code, end, &new_vars, temps, rel_info);
+            // *alloc_end = old_start;
         }
     }
 }
 
-pub fn generate<E: Endian>(program: &mut Program<E>, code: &IRCode) -> RelInfo {
+pub fn generate<E: Endian>(program: &mut Program<E>, code: &Code) -> RelInfo {
     let mut rel_info = RelInfo::new();
-    let alloc = x86_analyse_ir(code);
+    let temps = calc_temp(code);
+    let alloc = analyse_alloc(code);
     program.mov_edp_esp();
     program.sub_esp_imm8(alloc.try_into().unwrap());
-    generate_ir(program, code, &mut 0, &Vars::new(), &mut rel_info);
+    generate_ir(program, code, 0, &Vars::new(), &temps, &mut rel_info);
     program.mov_esp_edp();
     rel_info
 }
 
 fn generate_ir<E: Endian>(
     program: &mut Program<E>,
-    code: &IRCode,
-    start: &mut i32,
+    code: &Code,
+    alloc_end: i32,
     vars: &Vars,
+    temps: &TempMap,
     rel_info: &mut RelInfo,
 ) {
-    for group in code.0.iter() {
-        for instruction in group.0.iter() {
-            generate_instruction(program, instruction, start, vars, rel_info);
-        }
+    for instruction in code.0.iter() {
+        generate_instruction(program, instruction, alloc_end, vars, temps, rel_info);
     }
 }
 
-fn analyse_ir_group(group: &InstructionGroup) -> u32 {
+fn analyse_alloc(code: &Code) -> u32 {
     let mut alloc = 0;
-    for instruction in group.0.iter() {
+    for instruction in code.0.iter() {
         if let Instruction::Block {
             decl_vars: vars,
             code,
         } = instruction
         {
-            // alloc += va
+            let mut block_alloc = 0;
             for (_var, typ) in vars.0.iter() {
-                alloc += typ.size();
+                block_alloc += typ.size();
             }
 
-            let mut max_alloc = 0;
-            for group in code.0.iter() {
-                max_alloc = max_alloc.max(analyse_ir_group(group));
-            }
-            alloc += max_alloc;
+            block_alloc += analyse_alloc(code);
+
+            alloc = alloc.max(block_alloc);
         }
     }
     alloc
 }
-fn x86_analyse_ir(code: &IRCode) -> u32 {
-    let mut alloc = 0;
-    for group in code.0.iter() {
-        alloc = analyse_ir_group(group);
+
+struct TempMap(Vec<Vec<u32>>);
+impl TempMap {
+    fn new() -> Self {
+        Self(vec![])
     }
-    alloc
+    fn get(&self, t: &u32) -> Register {
+        match self.0.iter().position(|rank| rank.contains(t)).unwrap() {
+            0 => Register::ECX,
+            1 => Register::EDX,
+            2 => Register::EBX,
+            3 => Register::ESI,
+            4 => Register::EDI,
+            _ => todo!()
+        }
+    }
 }
 
-fn calc_temp_space_needed(code: &IRCode) {
-    let mut max_temp_space = 0;
-    for group in code.0.iter() {
-        max_temp_space = max_temp_space.max(calc_temp_space_needed_instruction_group(group));
+fn calc_temp_value(value: &Value, temps: &mut TempMap) {
+    if let Value::Temp(t) = value {
+        let mut found = None;
+        let mut promoted_temps = vec![];
+    
+        for (rank, rank_temps) in temps.0.iter_mut().enumerate() {
+            if let Some(i) = rank_temps.iter().position(|tt| *tt == *t) {
+                let i = i + 1;
+                promoted_temps = rank_temps[i..].to_vec();
+                rank_temps.truncate(i);
+                found = Some(rank);
+                break;
+            }
+        }
+        match found {
+            Some(rank) => {
+                match temps.0.get_mut(rank+1) {
+                    Some(rank) => {
+                        rank.extend_from_slice(&promoted_temps);
+                    },
+                    None => {
+                        if !promoted_temps.is_empty() {
+                            temps.0.push(promoted_temps);
+                        }
+                    },
+                }
+            },
+            None => match temps.0.first_mut() {
+                Some(temps) => {
+                    temps.push(*t);
+                }
+                None => {
+                    temps.0.push(vec![*t]);
+                }
+            },
+        }
     }
 }
-fn calc_temp_space_needed_instruction_group(group: &InstructionGroup) -> u32 {
-    let mut highest_temp_num = 0;
-    for instruction in group.0.iter() {
-        if let Instruction::Assign { target, .. } | Instruction::Op { target, .. } = instruction {
-            if let Value::Temp(num) = target {
-                highest_temp_num = highest_temp_num.max(*num);
+fn calc_temp_code(code: &Code, temps: &mut TempMap) {
+    for instruction in code.0.iter() {
+        match instruction {
+            Instruction::Assign { target, value } => {
+                calc_temp_value(value, temps);
+                calc_temp_value(target, temps);
+            }
+            Instruction::Op {
+                target,
+                lhs,
+                op: _,
+                rhs,
+            } => {
+                calc_temp_value(lhs, temps);
+                calc_temp_value(rhs, temps);
+                calc_temp_value(target, temps);
+            }
+            Instruction::Function { name: _, args } => {
+                for arg in args.iter() {
+                    calc_temp_value(arg, temps);
+                }
+            }
+            Instruction::Block { decl_vars: _, code } => {
+                calc_temp_code(code, temps);
             }
         }
     }
-    highest_temp_num
 }
-fn contains_div(group: &InstructionGroup) -> bool {
-    for instruction in group.0.iter() {
-        if let Instruction::Op { op, .. } = instruction {
-            if *op == Operation::Div {
-                return true;
-            }
-        }
-    }
-    false
+fn calc_temp(code: &Code) -> TempMap {
+    let mut temps = TempMap::new();
+    calc_temp_code(code, &mut temps);
+    temps
 }

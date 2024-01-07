@@ -42,10 +42,10 @@ impl Block {
 impl Display for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{{")?;
-        // writeln!()
         for (id, typ) in self.vars.0.iter() {
             writeln!(f, "\t// var {id}: {typ}")?;
         }
+        writeln!(f)?;
         for instruction in self.instructions.iter() {
             let instruction = format!("{instruction}");
             for line in instruction.split('\n') {

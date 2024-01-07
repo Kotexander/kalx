@@ -1,12 +1,34 @@
 {
+	// var hello: str
+	// var bye: str
+	// var a: u32
+	// var b: u32
+	// var c: u32
+	// var abc: u32
+	// var cdecl: str
+	// var w: u32
 	// var x: u32
 	// var y: u32
 	// var z: u32
 	// var zdecl: str
+
+	var hello = "Hello world!";
+	var bye = "Goodbye world!\n";
+	printf("%s\n", hello);
+	printf(bye);
+	var a = 3;
+	var b = 5;
+	var c = (a + b);
+	var abc = ((a * c) + (b * c));
+	printf("abc = %u\n", abc);
+	var cdecl = "c = %u\n";
+	printf(cdecl, c);
+	var w = 5310;
+	printf("w = %u\n", w);
 	var x = 10;
 	var y = 5;
 	var z = ((((y + 1) * 5) * x) * y);
 	var zdecl = "z = %u\n";
 	printf(zdecl, z);
-	exit((x + y));
+	exit(0);
 }
