@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::{ffi::CStr, marker::PhantomData};
+use std::{ffi::CStr, marker::PhantomData, fmt::Display};
 
 use crate::elf::Endian;
 
@@ -63,7 +63,10 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&E::u32_bytes(imm));
     }
 
-    fn replace_u32(&mut self, addr: u32, imm: u32) {
+    pub fn replace_u8(&mut self, addr: u32, b: u8) {
+        self.code[addr as usize] = b;
+    }
+    pub fn replace_u32(&mut self, addr: u32, imm: u32) {
         let bytes = E::u32_bytes(imm);
         for (i, b) in bytes.into_iter().enumerate() {
             self.code[addr as usize + i] = b;
@@ -229,13 +232,34 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0xF7, modrm32]);
     }
 
+    pub fn cmp_eax_imm32(&mut self, imm: u32) {
+        self.code.push(0x3D);
+        self.imm32(imm);
+    }
     pub fn cmp_r_rm(&mut self, reg: Reg32, rm: RM32) {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code.extend_from_slice(&[0x3B, modrm32])
     }
+    pub fn cmp_rm_r(&mut self, rm: RM32, reg: Reg32) {
+        let modrm32 = modrm32(Mod32::Direct, rm, reg);
+        self.code.extend_from_slice(&[0x39, modrm32])
+    }
     pub fn cmp_rm_imm32(&mut self, rm: RM32, imm: u32) {
         let modrm32 = modrm32(Mod32::Direct, rm, Reg32::EDI);
         self.code.extend_from_slice(&[0x81, modrm32]);
+        self.imm32(imm);
+    }
+    pub fn cmp_rm8_r(&mut self, rm: RM32, r: Reg32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, r);
+        self.code.extend_from_slice(&[0x39, modrm32, disp as u8]);
+    }
+    pub fn cmp_r_rm8(&mut self, reg: Reg32, rm: RM32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.extend_from_slice(&[0x3B, modrm32, disp as u8])
+    }
+    pub fn cmp_rm8_imm32(&mut self, rm: RM32, disp: i8, imm: u32) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::EDI);
+        self.code.extend_from_slice(&[0x81, modrm32, disp as u8]);
         self.imm32(imm);
     }
 
@@ -332,11 +356,11 @@ impl<E: Endian> Program<E> {
     }
 
     pub fn loop_fn<F: FnMut(&mut Program<E>)>(&mut self, mut f: F) {
-        let start = self.code.len();
+        let start = self.addr();
         f(self);
         self.jmp_rel(0);
-        let end = self.code.len();
-        self.code[end - 1] = (start as i32 - end as i32) as u8;
+        let end = self.addr();
+        self.code[(end - 1) as usize] = (start as i32 - end as i32) as u8;
     }
 
     pub fn syscall(&mut self) {
@@ -371,5 +395,19 @@ impl<E: Endian> Program<E> {
 
     pub fn addr(&self) -> u32 {
         self.code.len() as u32
+    }
+}
+impl<E: Endian> Display for Program<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // writeln!(f, "offset: {}", self.offset)?;
+
+        for line in self.code.chunks(16) {
+            for byte in line {
+                write!(f, "{byte:02X} ");
+            }
+            writeln!(f)?;
+        }
+        
+        std::fmt::Result::Ok(())
     }
 }

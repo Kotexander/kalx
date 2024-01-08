@@ -8,13 +8,7 @@ use crate::{
 fn try_combine(lhs: &Expression, op: &Operation, rhs: &Expression) -> Option<Expression> {
     if let (Expression::Number(lhs), Expression::Number(rhs)) = (lhs, rhs) {
         let new = match op {
-            Operation::GTC => todo!(),
-            Operation::LTC => todo!(),
-            Operation::GTE => todo!(),
-            Operation::LTE => todo!(),
-            Operation::And => todo!(),
-            Operation::Or_ => todo!(),
-            Operation::EQL => todo!(),
+            Operation::Bool(_bop) => todo!(),
             Operation::BND => Expression::Number(lhs & rhs),
             Operation::BOR => Expression::Number(lhs | rhs),
             Operation::Add => Expression::Number(lhs + rhs),

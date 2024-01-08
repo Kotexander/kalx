@@ -1,37 +1,45 @@
-#include <stdio.h>
+// #include <stdio.h>
 
-int cube(int x) {
-    return x*x*x;
-}
+// int cube(int x) {
+//     return x*x*x;
+// }
 
-void test(int t) {
-    int x = 3;
-    int y = 7;
-    int z = 5;
+// void test(int t) {
+//     int x = 3;
+//     int y = 7;
+//     int z = 5;
 
-    int z_xy = z-x * y / t;
+//     int z_xy = z-x * y / t;
 
-    char str[] = "hello";
-    // str[t] = '0';
-}
+//     char str[] = "hello";
+//     // str[t] = '0';
+// }
 
 
 void square() {
-    int a = 5-2;
-    int b = 10;
-    int c = 15;
-    int z = a - (b - a) / (c - a);
-    int* w = &z;
-    printf("square! w*w=%u\n", *w);
+    // int a = 1;
+    // int b = 1;
+    // int c = 1;
 
-    test(3);
+    // int x = 0;
+    // while (a && (b || c)) {
+    //     int y = x;
+    //     x++;
+    // }
+    //  while (a) {
+    //     int y = x;
+    //     x++;
+    // }
 
-    for(int i = 0; i < 10; i++) {
-        int x = a * cube(c) - cube(b);
-        test(x);
-    }
-    for(int i = 0; i < 10; i++) {
-        int x = c * b - a;
-        test(x);
+
+    int i = 0;
+    while (i < 10) {
+        i = i + 1;
+        int j = 0;
+        while (j < 3) {
+            int x = 0;
+            j = j + 1;
+            x += j;
+        }
     }
 }

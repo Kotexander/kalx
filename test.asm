@@ -20,6 +20,7 @@ main:
     call printf                       ; Call the printf function
     add esp, 8
 
+    cmp dword [ebp-12], 10000
 
     mov eax, 5
     pop ebp

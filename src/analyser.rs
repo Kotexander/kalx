@@ -142,7 +142,7 @@ fn analyse_expr(
             let rhs_type = analyse_expr(rhs, funs, all_vars)?;
 
             if lhs_type == rhs_type {
-                let typ = if op.is_comparator() {
+                let typ = if op.is_bool_op() {
                     Type::Bool
                 } else {
                     lhs_type

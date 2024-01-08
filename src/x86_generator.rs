@@ -2,9 +2,9 @@ use std::{ffi::CString, rc::Rc};
 
 use crate::{
     elf::Endian,
-    ir::{Code, Instruction, Value},
+    ir::{Block, Instruction, Label, Value},
     parser::DeclaredVars,
-    tokenizer::{Id, Operation},
+    tokenizer::{BoolOperation, Id, Operation},
     x86_program::{Program, Reg32, RM32},
 };
 
@@ -72,6 +72,73 @@ impl RelInfo {
             funs: Functions::new(),
         }
     }
+    // pub fn clear(&mut self) {
+    //     self.strs.0.clear();
+    //     self.funs.0.clear();
+    // }
+    pub fn merge(&mut self, other: Self) {
+        for (string, rels) in other.strs.0 {
+            for rel in rels {
+                self.strs.add_rel(&string, rel)
+            }
+        }
+        for (name, rels) in other.funs.0 {
+            for rel in rels {
+                self.funs.add_rel(&name, rel)
+            }
+        }
+    }
+    pub fn add_offset(&mut self, offset: u32) {
+        for (_, rels) in self.strs.0.iter_mut() {
+            for rel in rels {
+                *rel += offset;
+            }
+        }
+        for (_, rels) in self.funs.0.iter_mut() {
+            for rel in rels {
+                *rel += offset;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LabelInfo(Vec<(Label, u32)>);
+impl LabelInfo {
+    fn new() -> Self {
+        Self(vec![])
+    }
+    fn add_label(&mut self, label: Label, addr: u32) {
+        match self
+            .0
+            .iter()
+            .find_map(|(l, a)| if *l == label { Some(*a) } else { None })
+        {
+            Some(a) => {
+                if a != addr {
+                    panic!("duplicate declaration of `L<{label}>` first: {a}, other: {addr}");
+                }
+            }
+            None => {
+                self.0.push((label, addr));
+            }
+        }
+    }
+    fn merge(&mut self, other: Self) {
+        for (label, addr) in other.0.into_iter() {
+            self.add_label(label, addr);
+        }
+    }
+    fn get(&self, label: &Label) -> Option<u32> {
+        self.0
+            .iter()
+            .find_map(|(l, a)| if *l == *label { Some(*a) } else { None })
+    }
+    fn add_offset(&mut self, offset: u32) {
+        for (_, addr) in self.0.iter_mut() {
+            *addr += offset;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,18 +175,6 @@ enum Register {
     ESI,
     EDI,
 }
-impl Register {
-    fn next(self) -> Self {
-        match self {
-            Register::EAX => Register::ECX,
-            Register::ECX => Register::EDX,
-            Register::EDX => Register::EBX,
-            Register::EBX => Register::ESI,
-            Register::ESI => Register::EDI,
-            Register::EDI => todo!(),
-        }
-    }
-}
 #[allow(clippy::from_over_into)]
 impl Into<RM32> for Register {
     fn into(self) -> RM32 {
@@ -147,22 +202,98 @@ impl Into<Reg32> for Register {
     }
 }
 
-// struct TempLocations(Vec<Register>);
-// impl TempLocations {
-//     fn new() -> Self {
-//         Self(vec![Register::ECX])
-//     }
-//     fn get(&mut self, temp: u32) -> Register {
-//         match self.0.get(temp as usize) {
-//             Some(reg) => *reg,
-//             None => {
-//                 let reg = self.0.last().unwrap().next();
-//                 self.0.push(reg);
-//                 reg
-//             }
-//         }
-//     }
-// }
+struct TempMap(Vec<Vec<u32>>);
+impl TempMap {
+    fn new() -> Self {
+        Self(vec![])
+    }
+    fn get(&self, t: &u32) -> Register {
+        match self.0.iter().position(|rank| rank.contains(t)).unwrap() {
+            0 => Register::ECX,
+            1 => Register::EDX,
+            2 => Register::EBX,
+            3 => Register::ESI,
+            4 => Register::EDI,
+            _ => todo!(),
+        }
+    }
+}
+
+fn calc_temp_value(value: &Value, temps: &mut TempMap) {
+    if let Value::Temp(t) = value {
+        let mut found = None;
+        let mut promoted_temps = vec![];
+
+        for (rank, rank_temps) in temps.0.iter_mut().enumerate() {
+            if let Some(i) = rank_temps.iter().position(|tt| *tt == *t) {
+                let i = i + 1;
+                promoted_temps = rank_temps[i..].to_vec();
+                rank_temps.truncate(i);
+                found = Some(rank);
+                break;
+            }
+        }
+        match found {
+            Some(rank) => match temps.0.get_mut(rank + 1) {
+                Some(rank) => {
+                    rank.extend_from_slice(&promoted_temps);
+                }
+                None => {
+                    if !promoted_temps.is_empty() {
+                        temps.0.push(promoted_temps);
+                    }
+                }
+            },
+            None => match temps.0.first_mut() {
+                Some(temps) => {
+                    temps.push(*t);
+                }
+                None => {
+                    temps.0.push(vec![*t]);
+                }
+            },
+        }
+    }
+}
+fn calc_temp_code(code: &Block, temps: &mut TempMap) {
+    for instruction in code.0.iter() {
+        match instruction {
+            Instruction::Assign { target, value } => {
+                calc_temp_value(value, temps);
+                calc_temp_value(target, temps);
+            }
+            Instruction::Op {
+                target,
+                lhs,
+                op: _,
+                rhs,
+            } => {
+                calc_temp_value(lhs, temps);
+                calc_temp_value(rhs, temps);
+                calc_temp_value(target, temps);
+            }
+            Instruction::Function { name: _, args } => {
+                for arg in args.iter() {
+                    calc_temp_value(arg, temps);
+                }
+            }
+            Instruction::Block { decl_vars: _, code } => {
+                calc_temp_code(code, temps);
+            }
+            Instruction::Label(_) => {}
+            Instruction::Goto(_) => {}
+            Instruction::IfElseGoto { lhs, rhs, .. } => {
+                calc_temp_value(lhs, temps);
+                calc_temp_value(rhs, temps);
+            }
+        }
+    }
+}
+fn calc_temp(code: &Block) -> TempMap {
+    let mut temps = TempMap::new();
+    calc_temp_code(code, &mut temps);
+    temps
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Term {
@@ -174,14 +305,14 @@ impl Term {
     fn is_location(&self) -> bool {
         matches!(self, Self::Reg(_) | Self::Stack(_))
     }
-    fn from_value(value: &Value, vars: &Vars, temp: &TempMap) -> Self {
+    fn from_value(value: &Value, vars: &Vars, temps: &TempMap) -> Self {
         match value {
             Value::Id(id) => {
                 let disp = vars.get(id).unwrap();
                 Self::Stack(disp)
             }
             Value::Temp(t) => {
-                let reg = temp.get(t);
+                let reg = temps.get(t);
                 Self::Reg(reg)
             }
             Value::Num(num) => Self::Imm(*num),
@@ -337,6 +468,152 @@ fn op_t_t_t<E: Endian>(
     }
 }
 
+fn cmp<E: Endian>(program: &mut Program<E>, lhs: Term, rhs: Term) {
+    match (lhs, rhs) {
+        (Term::Imm(_), Term::Imm(_)) => todo!(),
+        (Term::Imm(_), Term::Reg(_)) => todo!(),
+        (Term::Imm(_), Term::Stack(_)) => todo!(),
+        (Term::Reg(r), Term::Stack(disp)) => {
+            program.cmp_r_rm8(r.into(), RM32::EBP, disp.try_into().unwrap());
+        }
+        (Term::Reg(r), Term::Imm(n)) => {
+            program.cmp_rm_imm32(r.into(), n);
+        }
+        (Term::Reg(r), Term::Reg(r2)) => {
+            program.cmp_rm_r(r.into(), r2.into());
+            // program.cmp_r_rm(r.into(), r2.into());
+        }
+        (Term::Stack(disp), Term::Imm(n)) => {
+            program.cmp_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), n);
+        }
+        (Term::Stack(disp), Term::Reg(r)) => {
+            program.cmp_rm8_r(RM32::EBP, r.into(), disp.try_into().unwrap());
+        }
+        (Term::Stack(disp), Term::Stack(disp2)) => {
+            program.mov_r_rm8(Reg32::EAX, RM32::EBP, disp.try_into().unwrap());
+            program.cmp_r_rm8(Reg32::EAX, RM32::EBP, disp2.try_into().unwrap());
+        }
+    }
+}
+
+pub fn generate<E: Endian>(code: &Block) -> (Program<E>, RelInfo) {
+    let mut program = Program::<E>::new();
+    let vars = &Vars::new();
+    let temps = calc_temp(code);
+    let mut label_info = LabelInfo::new();
+    let mut rel_info = RelInfo::new();
+
+    let alloc = analyse_alloc(code);
+    program.mov_edp_esp();
+    program.sub_esp_imm8(alloc.try_into().unwrap());
+    generate_block(
+        &mut program,
+        &mut code.0.iter(),
+        0,
+        vars,
+        &temps,
+        &mut rel_info,
+        &mut label_info,
+        None,
+    );
+    program.mov_esp_edp();
+    (program, rel_info)
+}
+
+fn generate_block<'a, E: Endian>(
+    program: &mut Program<E>,
+    code: &mut impl Iterator<Item = &'a Instruction>,
+    alloc_end: i32,
+    vars: &Vars,
+    temps: &TempMap,
+    rel_info: &mut RelInfo,
+    label_info: &mut LabelInfo,
+    looking_for: Option<Label>,
+) {
+    while let Some(instruction) = code.next() {
+        match instruction {
+            Instruction::Goto(l) => {
+                if let Some(label_addr) = label_info.get(l) {
+                    let rel_byte = program.jmp_rel(0);
+                    let jmp_addr = program.addr();
+                    let rel: i8 = (label_addr as i32 - jmp_addr as i32).try_into().unwrap();
+                    program.replace_u8(rel_byte, rel as u8);
+                } else {
+                    let mut temp_p = Program::<E>::new();
+                    let mut temp_r = RelInfo::new();
+                    let mut temp_l = LabelInfo::new();
+                    generate_block(
+                        &mut temp_p,
+                        code,
+                        alloc_end,
+                        vars,
+                        temps,
+                        &mut temp_r,
+                        &mut temp_l,
+                        Some(*l),
+                    );
+
+                    let label_addr = temp_l.get(l).unwrap();
+                    let rel_byte = program.jmp_rel(0);
+                    // let jmp_addr = program.addr();
+                    let rel: i8 = (label_addr as i32).try_into().unwrap();
+                    program.replace_u8(rel_byte, rel as u8);
+
+                    let offset = program.addr();
+                    temp_r.add_offset(offset);
+                    temp_l.add_offset(offset);
+                    rel_info.merge(temp_r);
+                    label_info.merge(temp_l);
+                    program.code.extend_from_slice(&temp_p.code);
+                }
+            }
+            Instruction::IfElseGoto {
+                lhs,
+                op,
+                rhs,
+                good,
+                bad,
+            } => {
+                cmp(
+                    program,
+                    Term::from_value(lhs, vars, temps),
+                    Term::from_value(rhs, vars, temps),
+                );
+                if let Some(good_addr) = label_info.get(good) {
+                    let rel_byte = match op {
+                        BoolOperation::GTC => program.jg(0),
+                        BoolOperation::LTC => program.jl(0),
+                        BoolOperation::GTE => program.jge(0),
+                        BoolOperation::LTE => program.jle(0),
+                        _ => todo!(),
+                    };
+                    let jmp_addr = program.addr();
+                    let rel: i8 = (good_addr as i32 - jmp_addr as i32).try_into().unwrap();
+                    program.replace_u8(rel_byte, rel as u8);
+                }
+                if let Some(_bad) = bad {
+                    panic!()
+                }
+            }
+            _ => {
+                generate_instruction(
+                    program,
+                    instruction,
+                    alloc_end,
+                    vars,
+                    temps,
+                    rel_info,
+                    label_info,
+                );
+            }
+        }
+        if let Some(label) = looking_for {
+            if label_info.get(&label).is_some() {
+                return;
+            }
+        }
+    }
+}
 fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
@@ -344,6 +621,7 @@ fn generate_instruction<E: Endian>(
     vars: &Vars,
     temps: &TempMap,
     rel_info: &mut RelInfo,
+    label_info: &mut LabelInfo,
 ) {
     match instruction {
         Instruction::Assign { target, value } => match target {
@@ -380,7 +658,7 @@ fn generate_instruction<E: Endian>(
                 Term::from_value(lhs, vars, temps),
                 op,
                 Term::from_value(rhs, vars, temps),
-            )
+            );
         }
         Instruction::Function { name, args } => {
             match name.0.as_str() {
@@ -432,41 +710,29 @@ fn generate_instruction<E: Endian>(
             }
         }
         Instruction::Block { decl_vars, code } => {
-            // let old_start = *alloc_end;
-            let mut end = alloc_end;
-            let mut new_vars = Vars::alloc_vars(decl_vars, &mut end);
+            let mut new_alloc_end = alloc_end;
+            let mut new_vars = Vars::alloc_vars(decl_vars, &mut new_alloc_end);
             new_vars.add(vars);
-            generate_ir(program, code, end, &new_vars, temps, rel_info);
-            // *alloc_end = old_start;
+            generate_block(
+                program,
+                &mut code.0.iter(),
+                new_alloc_end,
+                &new_vars,
+                temps,
+                rel_info,
+                label_info,
+                None,
+            );
         }
+        Instruction::Label(l) => {
+            label_info.add_label(*l, program.addr());
+        }
+        Instruction::Goto(_) => todo!(),
+        Instruction::IfElseGoto { .. } => todo!(),
     }
 }
 
-pub fn generate<E: Endian>(program: &mut Program<E>, code: &Code) -> RelInfo {
-    let mut rel_info = RelInfo::new();
-    let temps = calc_temp(code);
-    let alloc = analyse_alloc(code);
-    program.mov_edp_esp();
-    program.sub_esp_imm8(alloc.try_into().unwrap());
-    generate_ir(program, code, 0, &Vars::new(), &temps, &mut rel_info);
-    program.mov_esp_edp();
-    rel_info
-}
-
-fn generate_ir<E: Endian>(
-    program: &mut Program<E>,
-    code: &Code,
-    alloc_end: i32,
-    vars: &Vars,
-    temps: &TempMap,
-    rel_info: &mut RelInfo,
-) {
-    for instruction in code.0.iter() {
-        generate_instruction(program, instruction, alloc_end, vars, temps, rel_info);
-    }
-}
-
-fn analyse_alloc(code: &Code) -> u32 {
+fn analyse_alloc(code: &Block) -> u32 {
     let mut alloc = 0;
     for instruction in code.0.iter() {
         if let Instruction::Block {
@@ -485,93 +751,4 @@ fn analyse_alloc(code: &Code) -> u32 {
         }
     }
     alloc
-}
-
-struct TempMap(Vec<Vec<u32>>);
-impl TempMap {
-    fn new() -> Self {
-        Self(vec![])
-    }
-    fn get(&self, t: &u32) -> Register {
-        match self.0.iter().position(|rank| rank.contains(t)).unwrap() {
-            0 => Register::ECX,
-            1 => Register::EDX,
-            2 => Register::EBX,
-            3 => Register::ESI,
-            4 => Register::EDI,
-            _ => todo!()
-        }
-    }
-}
-
-fn calc_temp_value(value: &Value, temps: &mut TempMap) {
-    if let Value::Temp(t) = value {
-        let mut found = None;
-        let mut promoted_temps = vec![];
-    
-        for (rank, rank_temps) in temps.0.iter_mut().enumerate() {
-            if let Some(i) = rank_temps.iter().position(|tt| *tt == *t) {
-                let i = i + 1;
-                promoted_temps = rank_temps[i..].to_vec();
-                rank_temps.truncate(i);
-                found = Some(rank);
-                break;
-            }
-        }
-        match found {
-            Some(rank) => {
-                match temps.0.get_mut(rank+1) {
-                    Some(rank) => {
-                        rank.extend_from_slice(&promoted_temps);
-                    },
-                    None => {
-                        if !promoted_temps.is_empty() {
-                            temps.0.push(promoted_temps);
-                        }
-                    },
-                }
-            },
-            None => match temps.0.first_mut() {
-                Some(temps) => {
-                    temps.push(*t);
-                }
-                None => {
-                    temps.0.push(vec![*t]);
-                }
-            },
-        }
-    }
-}
-fn calc_temp_code(code: &Code, temps: &mut TempMap) {
-    for instruction in code.0.iter() {
-        match instruction {
-            Instruction::Assign { target, value } => {
-                calc_temp_value(value, temps);
-                calc_temp_value(target, temps);
-            }
-            Instruction::Op {
-                target,
-                lhs,
-                op: _,
-                rhs,
-            } => {
-                calc_temp_value(lhs, temps);
-                calc_temp_value(rhs, temps);
-                calc_temp_value(target, temps);
-            }
-            Instruction::Function { name: _, args } => {
-                for arg in args.iter() {
-                    calc_temp_value(arg, temps);
-                }
-            }
-            Instruction::Block { decl_vars: _, code } => {
-                calc_temp_code(code, temps);
-            }
-        }
-    }
-}
-fn calc_temp(code: &Code) -> TempMap {
-    let mut temps = TempMap::new();
-    calc_temp_code(code, &mut temps);
-    temps
 }

@@ -6,14 +6,14 @@
     printf("%s\n", hello);
     printf(bye);
 
-    var a = 3;
-    var b = 5;
-    var c = a+b;
-    var abc = a*c + b * c;
-    printf("abc = %u\n", abc);
+    // var a = 3;
+    // var b = 5;
+    // var c = a+b;
+    // var abc = a*c + b * c;
+    // printf("abc = %u\n", abc);
 
-    var cdecl = "c = %u\n";
-    printf(cdecl, c);
+    // var cdecl = "c = %u\n";
+    // printf(cdecl, c);
 
     // printf("\n\nFibonacci FOREVER:\n");
     // var fi = 0;
@@ -27,38 +27,38 @@
     //     fi = fi + 1;
     // }
 
-    // // var i = 0;
-    // // var s = "hi ";
-    // // while i < 10 {
-    // //     printf(s);
-    // //     printf("loop %u\n", i);
-    // //     i = i + 1;
-    // //     var j = 0;
-    // //     while j < 3 {
-    // //         printf("inner %u\n", j);
-    // //         j = j + 1;
-    // //     }
-    // // }
+    var i = 0;
+    var s = "hi ";
+    while i < 10 {
+        printf(s);
+        printf("loop %u\n", i);
+        i = i + 1;
+        var j = 0;
+        while j < 3 {
+            printf("inner %u\n", j);
+            j = j + 1;
+        }
+    }
 
-    // // // Fibonacci
-    // // printf("\n\nFibonacci:\n");
-    // // var fi = 0;
-    // // var fa = 0;
-    // // var fb = 1;
-    // // while fi < 48 { // 48 iterations before fa and fb overflow 
-    // //     printf("%+2u: %u\n", fi+1, fa);
-    // //     var ft = fa + fb;
-    // //     fa = fb;
-    // //     fb = ft;
-    // //     fi = fi + 1;
-    // // }
+    // Fibonacci
+    printf("\n\nFibonacci:\n");
+    var fi = 0;
+    var fa = 0;
+    var fb = 1;
+    while fi < 48 { // 48 iterations before fa and fb overflow 
+        printf("%+2u: %u\n", fi+1, fa);
+        var ft = fa + fb;
+        fa = fb;
+        fb = ft;
+        fi = fi + 1;
+    }
 
-    var w = (((50 + 20) * (100 - 30)) + (500 - (25 * 2)) - (80 - 40));
-    printf("w = %u\n", w);
-    var x = 10;
-    var y = 5;
-    var z = x * ((y + 1) * 5) * y;
-    var zdecl = "z = %u\n";
-    printf(zdecl, z);
+    // var w = (((50 + 20) * (100 - 30)) + (500 - (25 * 2)) - (80 - 40));
+    // printf("w = %u\n", w);
+    // var x = 10;
+    // var y = 5;
+    // var z = x * ((y + 1) * 5) * y;
+    // var zdecl = "z = %u\n";
+    // printf(zdecl, z);
     exit(0);
 }

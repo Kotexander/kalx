@@ -1,8 +1,8 @@
 use std::{ffi::CString, fmt::Display, rc::Rc};
 
 use crate::{
-    parser::{self, Block, DeclaredVars},
-    tokenizer::{Id, Operation},
+    parser::{self, DeclaredVars},
+    tokenizer::{BoolOperation, Id, Operation},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,8 @@ impl Display for Value {
         }
     }
 }
+
+pub type Label = u32;
 #[derive(Debug, Clone)]
 pub enum Instruction {
     Assign {
@@ -40,9 +42,23 @@ pub enum Instruction {
     },
     Block {
         decl_vars: DeclaredVars,
-        code: Code,
+        code: Block,
+    },
+    Label(Label),
+    Goto(Label),
+    IfElseGoto {
+        lhs: Value,
+        op: BoolOperation,
+        rhs: Value,
+        good: Label,
+        bad: Option<Label>,
     },
 }
+// impl Instruction {
+// fn is_goto() {
+
+// }
+// }
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -83,18 +99,48 @@ impl Display for Instruction {
                 }
                 write!(f, "}}")
             }
+            Instruction::Label(l) => {
+                write!(f, "L<{l}>:")
+            }
+            Instruction::Goto(l) => {
+                write!(f, "goto<{l}>;")
+            }
+            Instruction::IfElseGoto {
+                lhs,
+                op,
+                rhs,
+                good,
+                bad,
+            } => {
+                let op = Operation::Bool(*op);
+                if let Some(bad) = bad {
+                    write!(
+                        f,
+                        "if {lhs} {op} {rhs} {} else {}",
+                        Self::Goto(*good),
+                        Self::Goto(*bad)
+                    )
+                }
+                else {
+                    write!(
+                        f,
+                        "if {lhs} {op} {rhs} {}",
+                        Self::Goto(*good),
+                    )
+                }
+            }
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Code(pub Vec<Instruction>);
-impl Code {
+pub struct Block(pub Vec<Instruction>);
+impl Block {
     fn new() -> Self {
         Self(vec![])
     }
 }
-impl Display for Code {
+impl Display for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for instruction_group in self.0.iter() {
             writeln!(f, "{instruction_group}")?;
@@ -103,7 +149,7 @@ impl Display for Code {
     }
 }
 
-fn generate_temp_expr(code: &mut Code, expr: &parser::Expression, temp: &mut u32) -> Value {
+fn generate_temp_expr(code: &mut Block, expr: &parser::Expression, temp: &mut u32) -> Value {
     match expr {
         parser::Expression::Number(num) => Value::Num(*num),
         parser::Expression::String(string) => Value::String(string.clone()),
@@ -111,7 +157,7 @@ fn generate_temp_expr(code: &mut Code, expr: &parser::Expression, temp: &mut u32
         parser::Expression::Operation { lhs, op, rhs } => {
             let lhs_value = generate_temp_expr(code, lhs, temp);
             let rhs_value = generate_temp_expr(code, rhs, temp);
-            
+
             let value = Value::Temp(*temp);
             *temp += 1;
             code.0.push(Instruction::Op {
@@ -129,7 +175,41 @@ fn generate_temp_expr(code: &mut Code, expr: &parser::Expression, temp: &mut u32
     }
 }
 
-fn generate_expr(code: &mut Code, expr: &parser::Expression, target: Value, temp: &mut u32) {
+struct BoolDest {
+    good: Label,
+    bad: Option<Label>,
+}
+fn generate_bool_expr(
+    code: &mut Block,
+    expr: &parser::Expression,
+    bool_dest: &BoolDest,
+    temp: &mut u32,
+) {
+    match expr {
+        parser::Expression::Operation { lhs, op, rhs } => {
+            if let Operation::Bool(bop) = op {
+                let lhs_value = generate_temp_expr(code, lhs, temp);
+                let rhs_value = generate_temp_expr(code, rhs, temp);
+                code.0.push(Instruction::IfElseGoto {
+                    lhs: lhs_value,
+                    op: *bop,
+                    rhs: rhs_value,
+                    good: bool_dest.good,
+                    bad: bool_dest.bad,
+                });
+            } else {
+                panic!();
+            }
+        }
+        parser::Expression::Number(_) => todo!(),
+        parser::Expression::String(_) => todo!(),
+        parser::Expression::Ident(_) => todo!(),
+        parser::Expression::Index { .. } => todo!(),
+        parser::Expression::Function { .. } => todo!(),
+    }
+}
+
+fn generate_expr(code: &mut Block, expr: &parser::Expression, target: Value, temp: &mut u32) {
     match expr {
         parser::Expression::Number(num) => {
             code.0.push(Instruction::Assign {
@@ -174,7 +254,12 @@ fn generate_expr(code: &mut Code, expr: &parser::Expression, target: Value, temp
     }
 }
 
-fn generate_instruction(code: &mut Code, instruction: parser::Instruction, temp: &mut u32) {
+fn generate_instruction(
+    code: &mut Block,
+    instruction: parser::Instruction,
+    temp: &mut u32,
+    label: &mut Label,
+) {
     match instruction {
         parser::Instruction::Declare { id, value } | parser::Instruction::Assign { id, value } => {
             generate_expr(code, &value, Value::Id(id.clone()), temp);
@@ -182,18 +267,52 @@ fn generate_instruction(code: &mut Code, instruction: parser::Instruction, temp:
         parser::Instruction::Expr(expr) => {
             generate_expr(code, &expr, Value::Temp(0), temp);
         }
-        parser::Instruction::Loop(_) => todo!(),
-        parser::Instruction::While { expr: _, block: _ } => todo!(),
+        parser::Instruction::Loop(block) => {
+            let l = *label;
+            *label += 1;
+            code.0.push(Instruction::Label(l));
+            generate_block(code, Rc::into_inner(block).unwrap(), temp, label);
+            code.0.push(Instruction::Goto(l));
+        }
+        parser::Instruction::While { expr, block } => {
+            let skip_l = *label;
+            *label += 1;
+            let good_l = *label;
+            *label += 1;
+            // let bad_l = *label;
+            // *label += 1;
+
+            code.0.push(Instruction::Goto(skip_l));
+            code.0.push(Instruction::Label(good_l));
+            generate_block(code, Rc::into_inner(block).unwrap(), temp, label);
+            code.0.push(Instruction::Label(skip_l));
+            generate_bool_expr(
+                code,
+                &expr,
+                &BoolDest {
+                    good: good_l,
+                    // bad: Some(bad_l),
+                    bad: None,
+                },
+                temp,
+            );
+            // code.0.push(Instruction::Label(bad_l));
+        }
         parser::Instruction::Block(block) => {
-            generate_block(code, Rc::into_inner(block).unwrap(), temp);
+            generate_block(code, Rc::into_inner(block).unwrap(), temp, label);
         }
     }
 }
 
-fn generate_block(code: &mut Code, block: Block, temp: &mut u32) {
-    let mut block_code = Code::new();
+fn generate_block(code: &mut Block, block: parser::Block, temp: &mut u32, label: &mut Label) {
+    let mut block_code = Block::new();
     for instruction in block.instructions.into_iter() {
-        generate_instruction(&mut block_code, Rc::into_inner(instruction).unwrap(), temp);
+        generate_instruction(
+            &mut block_code,
+            Rc::into_inner(instruction).unwrap(),
+            temp,
+            label,
+        );
     }
     code.0.push(Instruction::Block {
         decl_vars: block.vars,
@@ -201,8 +320,8 @@ fn generate_block(code: &mut Code, block: Block, temp: &mut u32) {
     });
 }
 
-pub fn generate(block: Block) -> Code {
-    let mut code = Code::new();
-    generate_block(&mut code, block, &mut 0);
+pub fn generate(block: parser::Block) -> Block {
+    let mut code = Block::new();
+    generate_block(&mut code, block, &mut 0, &mut 0);
     code
 }

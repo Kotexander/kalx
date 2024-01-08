@@ -1,39 +1,56 @@
 {
 	var hello: str
 	var bye: str
-	var a: u32
-	var b: u32
-	var c: u32
-	var abc: u32
-	var cdecl: str
-	var w: u32
-	var x: u32
-	var y: u32
-	var z: u32
-	var zdecl: str
+	var i: u32
+	var s: str
+	var fi: u32
+	var fa: u32
+	var fb: u32
 
 	hello = "Hello world!";
 	bye = "Goodbye world!\n";
 	printf("%s\n", hello);
 	printf(bye);
-	a = 3;
-	b = 5;
-	c = a + b;
-	_0 = a * c;
-	_1 = b * c;
-	abc = _0 + _1;
-	printf("abc = %u\n", abc);
-	cdecl = "c = %u\n";
-	printf(cdecl, c);
-	w = 5310;
-	printf("w = %u\n", w);
-	x = 10;
-	y = 5;
-	_2 = y + 1;
-	_3 = _2 * 5;
-	_4 = _3 * x;
-	z = _4 * y;
-	zdecl = "z = %u\n";
-	printf(zdecl, z);
+	i = 0;
+	s = "hi ";
+	goto<0>;
+	L<1>:
+	{
+		var j: u32
+	
+		printf(s);
+		printf("loop %u\n", i);
+		i = i + 1;
+		j = 0;
+		goto<2>;
+		L<3>:
+		{
+		
+			printf("inner %u\n", j);
+			j = j + 1;
+		}
+		L<2>:
+		if j < 3 goto<3>;
+	}
+	L<0>:
+	if i < 10 goto<1>;
+	printf("\n\nFibonacci:\n");
+	fi = 0;
+	fa = 0;
+	fb = 1;
+	goto<4>;
+	L<5>:
+	{
+		var ft: u32
+	
+		_0 = fi + 1;
+		printf("%+2u: %u\n", _0, fa);
+		ft = fa + fb;
+		fa = fb;
+		fb = ft;
+		fi = fi + 1;
+	}
+	L<4>:
+	if fi < 48 goto<5>;
 	exit(0);
 }

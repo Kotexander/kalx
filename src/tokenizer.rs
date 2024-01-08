@@ -56,14 +56,33 @@ impl Display for Type {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::upper_case_acronyms)]
-pub enum Operation {
+pub enum BoolOperation {
     GTC,
     LTC,
     GTE,
     LTE,
-    EQL,
+    Eql,
     And,
     Or_,
+}
+impl BoolOperation {
+    fn switch(self) -> Self {
+        match self {
+            BoolOperation::GTC => BoolOperation::LTC,
+            BoolOperation::LTC => BoolOperation::GTC,
+            BoolOperation::GTE => BoolOperation::LTE,
+            BoolOperation::LTE => BoolOperation::GTE,
+            BoolOperation::Eql => BoolOperation::Eql,
+            BoolOperation::And => BoolOperation::And,
+            BoolOperation::Or_ => BoolOperation::Or_,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum Operation {
+    Bool(BoolOperation),
     BND,
     BOR,
     Add,
@@ -81,26 +100,24 @@ impl Display for Operation {
         write!(f, "{s}")
     }
 }
-
 impl Operation {
     pub fn precedence(self) -> i32 {
+        use BoolOperation::*;
         match self {
-            Operation::GTC
-            | Operation::LTC
-            | Operation::GTE
-            | Operation::LTE
-            | Operation::EQL
-            | Operation::And
-            | Operation::Or_ => 0,
-            Operation::Add | Operation::Sub => 1,
-            Operation::Mul | Operation::Div => 2,
-            Operation::BND | Operation::BOR => 3,
+            Operation::Bool(And | Or_) => 0,
+            Operation::Bool(_) => 1,
+            Operation::Add | Operation::Sub => 2,
+            Operation::Mul | Operation::Div => 3,
+            Operation::BND | Operation::BOR => 4,
         }
     }
     pub fn is_commutative(&self) -> bool {
         matches!(
             self,
-            Operation::Or_ | Operation::And | Operation::Add | Operation::Mul
+            Operation::Bool(BoolOperation::Or_)
+                | Operation::Bool(BoolOperation::And)
+                | Operation::Add
+                | Operation::Mul
         )
     }
 
@@ -113,30 +130,22 @@ impl Operation {
         None
     }
 
-    pub fn is_comparator(&self) -> bool {
-        matches!(
-            self,
-            Operation::GTC
-                | Operation::LTC
-                | Operation::GTE
-                | Operation::LTE
-                | Operation::And
-                | Operation::Or_
-        )
+    pub fn is_bool_op(&self) -> bool {
+        matches!(self, Operation::Bool(_))
     }
 
     const MAPPING: &'static [(&'static str, Self)] = &[
-        (">=", Self::GTE),
-        ("<=", Self::LTE),
-        ("&&", Self::And),
-        ("||", Self::Or_),
-        ("==", Self::EQL),
+        (">=", Self::Bool(BoolOperation::GTE)),
+        ("<=", Self::Bool(BoolOperation::LTE)),
+        ("&&", Self::Bool(BoolOperation::And)),
+        ("||", Self::Bool(BoolOperation::Or_)),
+        ("==", Self::Bool(BoolOperation::Eql)),
         ("+", Self::Add),
         ("-", Self::Sub),
         ("*", Self::Mul),
         ("/", Self::Div),
-        (">", Self::GTC),
-        ("<", Self::LTC),
+        (">", Self::Bool(BoolOperation::GTC)),
+        ("<", Self::Bool(BoolOperation::LTC)),
         ("&", Self::BND),
         ("|", Self::BOR),
     ];
