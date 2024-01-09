@@ -45,7 +45,9 @@ impl Display for Block {
         for (id, typ) in self.vars.0.iter() {
             writeln!(f, "\t// var {id}: {typ}")?;
         }
-        writeln!(f)?;
+        if !self.vars.0.is_empty() {
+            writeln!(f)?;
+        }
         for instruction in self.instructions.iter() {
             let instruction = format!("{instruction}");
             for line in instruction.split('\n') {
@@ -73,6 +75,10 @@ pub enum Instruction {
         expr: Rc<Expression>,
         block: Rc<Block>,
     },
+    If {
+        expr: Rc<Expression>,
+        block: Rc<Block>,
+    },
 }
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -83,6 +89,7 @@ impl Display for Instruction {
             Instruction::Loop(block) => write!(f, "loop\n{block}"),
             Instruction::While { expr, block } => write!(f, "while {expr}\n{block}"),
             Instruction::Block(block) => write!(f, "{block}"),
+            Instruction::If { expr, block } => write!(f, "if {expr}\n{block}"),
         }
     }
 }
@@ -107,14 +114,6 @@ pub enum Expression {
 }
 impl Expression {
     pub fn is_recursive(&self) -> bool {
-        // match self {
-        //     Expression::Number(_) => false,
-        //     Expression::String(_) => false,
-        //     Expression::Ident(_) => false,
-        //     Expression::Operation { .. } => true,
-        //     Expression::Index { .. } => true,
-        //     Expression::Function { .. } => true,
-        // }
         matches!(
             self,
             Expression::Operation { .. } | Expression::Index { .. } | Expression::Function { .. }
@@ -122,6 +121,21 @@ impl Expression {
     }
     pub fn is_const(&self) -> bool {
         matches!(self, Expression::Number(_))
+    }
+    pub fn is_bool(&self) -> bool {
+        matches!(
+            self,
+            Expression::Operation {
+                op: Operation::Bool(_),
+                ..
+            }
+        )
+    }
+    pub fn is_next_bool(&self) -> bool {
+        match self {
+            Expression::Operation { lhs, op: _, rhs } => lhs.is_bool() && rhs.is_bool(),
+            _ => false,
+        }
     }
 }
 impl Display for Expression {
@@ -426,6 +440,18 @@ pub fn parse(code: &str) -> Result<Rc<Block>, String> {
                     [.., Node::Token(Token::While), Node::AST(AST::Expression(expr)), Node::AST(AST::Block(block))] =>
                     {
                         let node: AST = Rc::new(Instruction::While {
+                            expr: expr.clone(),
+                            block: block.clone(),
+                        })
+                        .into();
+                        nodes.reduce(3);
+                        nodes.push(node);
+                        true
+                    }
+                    // if
+                    [.., Node::Token(Token::If), Node::AST(AST::Expression(expr)), Node::AST(AST::Block(block))] =>
+                    {
+                        let node: AST = Rc::new(Instruction::If {
                             expr: expr.clone(),
                             block: block.clone(),
                         })

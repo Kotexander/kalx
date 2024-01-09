@@ -21,9 +21,9 @@ pub enum RM32 {
     ECX = 0b001,
     EDX = 0b010,
     EBX = 0b011,
-    /// this is ESP when Mod is 0b11
+    /// this is ESP when Mod [Mod32::Direct]
     SIB = 0b100,
-    /// this is disp32 when Mod is 0b00
+    /// this is disp32 when Mod is [Mod32::Disp00]
     EBP = 0b101,
     ESI = 0b110,
     EDI = 0b111,
@@ -102,21 +102,6 @@ impl<E: Endian> Program<E> {
         let rel = self.addr();
         self.imm32(imm);
         rel
-    }
-
-    /// used to sace the stack
-    pub fn mov_edp_esp(&mut self) {
-        self.code.extend_from_slice(&[
-            0x89, // move
-            0xE5, // esp -> ebp
-        ]);
-    }
-    /// used to restore the stack
-    pub fn mov_esp_edp(&mut self) {
-        self.code.extend_from_slice(&[
-            0x89, // move
-            0xEC, // ebp -> esp
-        ]);
     }
 
     pub fn add_eax_imm32(&mut self, imm: u32) {
@@ -272,6 +257,9 @@ impl<E: Endian> Program<E> {
     pub fn push_r(&mut self, reg: Reg32) {
         self.code.push(0x50 + reg as u8);
     }
+    pub fn pop_r(&mut self, reg: Reg32) {
+        self.code.push(0x58 + reg as u8);
+    }
     // pub fn push_rm(&mut self, rm: RM32) {
     //     let modrm32 = modrm32(Mod32::Direct, rm, Reg32::ESI);
     //     self.code.extend_from_slice(&[0xFF, modrm32]);
@@ -288,12 +276,19 @@ impl<E: Endian> Program<E> {
         r
     }
 
-    pub fn jmp_rel(&mut self, rel: i8) -> u32 {
+    pub fn jmp_rel8(&mut self, rel: i8) -> u32 {
         self.code.push(0xEB);
-        let rel = self.addr();
+        let reloc = self.addr();
         self.code.push(rel as u8);
-        rel
+        reloc
     }
+    pub fn jmp_rel32(&mut self, rel: i32) -> u32 {
+        self.code.push(0xEB);
+        let reloc = self.addr();
+        self.imm32(rel as u32);
+        reloc
+    }
+    
     pub fn jl(&mut self, rel: i8) -> u32 {
         self.code.push(0x7C);
         let rel = self.addr();
@@ -355,10 +350,17 @@ impl<E: Endian> Program<E> {
         self.code.extend_from_slice(&[0x0F, 0xB6, modrm32])
     }
 
+    pub fn leave(&mut self) {
+        self.code.push(0xC9);
+    }
+    pub fn ret(&mut self) {
+        self.code.push(0xC3);
+    }
+
     pub fn loop_fn<F: FnMut(&mut Program<E>)>(&mut self, mut f: F) {
         let start = self.addr();
         f(self);
-        self.jmp_rel(0);
+        self.jmp_rel8(0);
         let end = self.addr();
         self.code[(end - 1) as usize] = (start as i32 - end as i32) as u8;
     }

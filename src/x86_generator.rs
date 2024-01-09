@@ -1,4 +1,4 @@
-use std::{ffi::CString, rc::Rc};
+use std::{ffi::CString, rc::Rc, vec};
 
 use crate::{
     elf::Endian,
@@ -76,41 +76,54 @@ impl RelInfo {
     //     self.strs.0.clear();
     //     self.funs.0.clear();
     // }
-    pub fn merge(&mut self, other: Self) {
-        for (string, rels) in other.strs.0 {
-            for rel in rels {
-                self.strs.add_rel(&string, rel)
-            }
-        }
-        for (name, rels) in other.funs.0 {
-            for rel in rels {
-                self.funs.add_rel(&name, rel)
-            }
-        }
-    }
-    pub fn add_offset(&mut self, offset: u32) {
-        for (_, rels) in self.strs.0.iter_mut() {
-            for rel in rels {
-                *rel += offset;
-            }
-        }
-        for (_, rels) in self.funs.0.iter_mut() {
-            for rel in rels {
-                *rel += offset;
-            }
-        }
-    }
+    // pub fn merge(&mut self, other: Self) {
+    //     for (string, rels) in other.strs.0 {
+    //         for rel in rels {
+    //             self.strs.add_rel(&string, rel)
+    //         }
+    //     }
+    //     for (name, rels) in other.funs.0 {
+    //         for rel in rels {
+    //             self.funs.add_rel(&name, rel)
+    //         }
+    //     }
+    // }
+    // pub fn add_offset(&mut self, offset: u32) {
+    //     for (_, rels) in self.strs.0.iter_mut() {
+    //         for rel in rels {
+    //             *rel += offset;
+    //         }
+    //     }
+    //     for (_, rels) in self.funs.0.iter_mut() {
+    //         for rel in rels {
+    //             *rel += offset;
+    //         }
+    //     }
+    // }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LabelRelocType {
+    Rel8(u32),
+    // Rel32(u32)
 }
 
 #[derive(Debug, Clone)]
-struct LabelInfo(Vec<(Label, u32)>);
+struct LabelInfo {
+    labels: Vec<(Label, u32)>,
+    /// (location, type)
+    reloc: Vec<(Label, Vec<(u32, LabelRelocType)>)>,
+}
 impl LabelInfo {
     fn new() -> Self {
-        Self(vec![])
+        Self {
+            labels: vec![],
+            reloc: vec![],
+        }
     }
     fn add_label(&mut self, label: Label, addr: u32) {
         match self
-            .0
+            .labels
             .iter()
             .find_map(|(l, a)| if *l == label { Some(*a) } else { None })
         {
@@ -120,24 +133,28 @@ impl LabelInfo {
                 }
             }
             None => {
-                self.0.push((label, addr));
+                self.labels.push((label, addr));
             }
         }
     }
-    fn merge(&mut self, other: Self) {
-        for (label, addr) in other.0.into_iter() {
-            self.add_label(label, addr);
+    fn add_rel(&mut self, label: &Label, location: u32, typ: LabelRelocType) {
+        match self
+            .reloc
+            .iter_mut()
+            .find_map(|(l, a)| if *l == *label { Some(a) } else { None })
+        {
+            Some(rels) => {
+                rels.push((location, typ));
+            }
+            None => {
+                self.reloc.push((*label, vec![(location, typ)]));
+            }
         }
     }
     fn get(&self, label: &Label) -> Option<u32> {
-        self.0
+        self.labels
             .iter()
             .find_map(|(l, a)| if *l == *label { Some(*a) } else { None })
-    }
-    fn add_offset(&mut self, offset: u32) {
-        for (_, addr) in self.0.iter_mut() {
-            *addr += offset;
-        }
     }
 }
 
@@ -282,7 +299,7 @@ fn calc_temp_code(code: &Block, temps: &mut TempMap) {
             }
             Instruction::Label(_) => {}
             Instruction::Goto(_) => {}
-            Instruction::IfElseGoto { lhs, rhs, .. } => {
+            Instruction::IfGoto { lhs, rhs, .. } => {
                 calc_temp_value(lhs, temps);
                 calc_temp_value(rhs, temps);
             }
@@ -504,116 +521,169 @@ pub fn generate<E: Endian>(code: &Block) -> (Program<E>, RelInfo) {
     let mut rel_info = RelInfo::new();
 
     let alloc = analyse_alloc(code);
-    program.mov_edp_esp();
+    // program.push_r(Reg32::EBX);
+    // program.push_r(Reg32::ESI);
+    // program.push_r(Reg32::EDI);
+    program.push_r(Reg32::EBP);
+    program.mov_rm_r(RM32::EBP, Reg32::ESP);
     program.sub_esp_imm8(alloc.try_into().unwrap());
     generate_block(
         &mut program,
-        &mut code.0.iter(),
+        code,
         0,
         vars,
         &temps,
         &mut rel_info,
         &mut label_info,
-        None,
     );
-    program.mov_esp_edp();
+
+    for (label, rels) in label_info.reloc.iter() {
+        let label_addr = label_info.get(label).unwrap();
+        for (location, typ) in rels.iter() {
+            match typ {
+                LabelRelocType::Rel8(addr) => {
+                    let rel: i8 = (label_addr as i32 - *addr as i32).try_into().unwrap();
+                    program.replace_u8(*location, rel as u8);
+                }
+            }
+        }
+    }
+
+    program.mov_r_imm32(Reg32::EAX, 0);
+    // program.pull_r(Reg32::EBX);
+    // program.pull_r(Reg32::ESI);
+    // program.pull_r(Reg32::EDI);
+    
+    program.mov_rm_r(RM32::SIB, Reg32::EBP);
+    program.pop_r(Reg32::EBP);
+    // program.leave();
+    program.ret();
     (program, rel_info)
 }
 
-fn generate_block<'a, E: Endian>(
+fn generate_block<E: Endian>(
     program: &mut Program<E>,
-    code: &mut impl Iterator<Item = &'a Instruction>,
+    code: &Block,
     alloc_end: i32,
     vars: &Vars,
     temps: &TempMap,
     rel_info: &mut RelInfo,
     label_info: &mut LabelInfo,
-    looking_for: Option<Label>,
 ) {
-    while let Some(instruction) = code.next() {
-        match instruction {
-            Instruction::Goto(l) => {
-                if let Some(label_addr) = label_info.get(l) {
-                    let rel_byte = program.jmp_rel(0);
-                    let jmp_addr = program.addr();
-                    let rel: i8 = (label_addr as i32 - jmp_addr as i32).try_into().unwrap();
-                    program.replace_u8(rel_byte, rel as u8);
-                } else {
-                    let mut temp_p = Program::<E>::new();
-                    let mut temp_r = RelInfo::new();
-                    let mut temp_l = LabelInfo::new();
-                    generate_block(
-                        &mut temp_p,
-                        code,
-                        alloc_end,
-                        vars,
-                        temps,
-                        &mut temp_r,
-                        &mut temp_l,
-                        Some(*l),
-                    );
-
-                    let label_addr = temp_l.get(l).unwrap();
-                    let rel_byte = program.jmp_rel(0);
-                    // let jmp_addr = program.addr();
-                    let rel: i8 = (label_addr as i32).try_into().unwrap();
-                    program.replace_u8(rel_byte, rel as u8);
-
-                    let offset = program.addr();
-                    temp_r.add_offset(offset);
-                    temp_l.add_offset(offset);
-                    rel_info.merge(temp_r);
-                    label_info.merge(temp_l);
-                    program.code.extend_from_slice(&temp_p.code);
-                }
-            }
-            Instruction::IfElseGoto {
-                lhs,
-                op,
-                rhs,
-                good,
-                bad,
-            } => {
-                cmp(
-                    program,
-                    Term::from_value(lhs, vars, temps),
-                    Term::from_value(rhs, vars, temps),
-                );
-                if let Some(good_addr) = label_info.get(good) {
-                    let rel_byte = match op {
-                        BoolOperation::GTC => program.jg(0),
-                        BoolOperation::LTC => program.jl(0),
-                        BoolOperation::GTE => program.jge(0),
-                        BoolOperation::LTE => program.jle(0),
-                        _ => todo!(),
-                    };
-                    let jmp_addr = program.addr();
-                    let rel: i8 = (good_addr as i32 - jmp_addr as i32).try_into().unwrap();
-                    program.replace_u8(rel_byte, rel as u8);
-                }
-                if let Some(_bad) = bad {
-                    panic!()
-                }
-            }
-            _ => {
-                generate_instruction(
-                    program,
-                    instruction,
-                    alloc_end,
-                    vars,
-                    temps,
-                    rel_info,
-                    label_info,
-                );
-            }
-        }
-        if let Some(label) = looking_for {
-            if label_info.get(&label).is_some() {
-                return;
-            }
-        }
+    for instruction in code.0.iter() {
+        generate_instruction(
+            program,
+            instruction,
+            alloc_end,
+            vars,
+            temps,
+            rel_info,
+            label_info,
+        );
     }
 }
+
+// fn generate_block<'a, E: Endian>(
+//     program: &mut Program<E>,
+//     code: &mut impl Iterator<Item = &'a Instruction>,
+//     alloc_end: i32,
+//     vars: &Vars,
+//     temps: &TempMap,
+//     rel_info: &mut RelInfo,
+//     label_info: &mut LabelInfo,
+//     looking_for: Option<Label>,
+// ) {
+//     while let Some(instruction) = code.next() {
+//         match instruction {
+//             Instruction::Goto(l) => {
+//                 if let Some(label_addr) = label_info.get(l) {
+//                     let rel_byte = program.jmp_rel(0);
+//                     let jmp_addr = program.addr();
+//                     let rel: i8 = (label_addr as i32 - jmp_addr as i32).try_into().unwrap();
+//                     program.replace_u8(rel_byte, rel as u8);
+//                 } else {
+//                     let mut temp_p = Program::<E>::new();
+//                     let mut temp_r = RelInfo::new();
+//                     let mut temp_l = LabelInfo::new();
+//                     generate_block(
+//                         &mut temp_p,
+//                         code,
+//                         alloc_end,
+//                         vars,
+//                         temps,
+//                         &mut temp_r,
+//                         &mut temp_l,
+//                         Some(*l),
+//                     );
+
+//                     let label_addr = temp_l.get(l).unwrap();
+//                     let rel_byte = program.jmp_rel(0);
+//                     // let jmp_addr = program.addr();
+//                     let rel: i8 = (label_addr as i32).try_into().unwrap();
+//                     program.replace_u8(rel_byte, rel as u8);
+
+//                     let offset = program.addr();
+//                     temp_r.add_offset(offset);
+//                     temp_l.add_offset(offset);
+//                     rel_info.merge(temp_r);
+//                     label_info.merge(temp_l);
+//                     program.code.extend_from_slice(&temp_p.code);
+//                 }
+//             }
+//             Instruction::IfElseGoto {
+//                 lhs,
+//                 op,
+//                 rhs,
+//                 good,
+//                 bad,
+//             } => {
+//                 cmp(
+//                     program,
+//                     Term::from_value(lhs, vars, temps),
+//                     Term::from_value(rhs, vars, temps),
+//                 );
+//                 if let Some(good_addr) = label_info.get(good) {
+//                     let rel_byte = match op {
+//                         BoolOperation::GTC => program.jg(0),
+//                         BoolOperation::LTC => program.jl(0),
+//                         BoolOperation::GTE => program.jge(0),
+//                         BoolOperation::LTE => program.jle(0),
+//                         _ => todo!(),
+//                     };
+//                     let jmp_addr = program.addr();
+//                     let rel: i8 = (good_addr as i32 - jmp_addr as i32).try_into().unwrap();
+//                     program.replace_u8(rel_byte, rel as u8);
+//                 }
+//                 else {
+//                     panic!()
+//                 }
+//                 if let Some(_bad) = bad {
+//                     panic!()
+//                 }
+//                 // else {
+//                 //     panic!()
+//                 // }
+//             }
+//             _ => {
+//                 generate_instruction(
+//                     program,
+//                     instruction,
+//                     alloc_end,
+//                     vars,
+//                     temps,
+//                     rel_info,
+//                     label_info,
+//                 );
+//             }
+//         }
+//         if let Some(label) = looking_for {
+//             if label_info.get(&label).is_some() {
+//                 return;
+//             }
+//         }
+//     }
+// }
+
 fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
@@ -715,20 +785,49 @@ fn generate_instruction<E: Endian>(
             new_vars.add(vars);
             generate_block(
                 program,
-                &mut code.0.iter(),
+                code,
                 new_alloc_end,
                 &new_vars,
                 temps,
                 rel_info,
                 label_info,
-                None,
             );
         }
         Instruction::Label(l) => {
             label_info.add_label(*l, program.addr());
         }
-        Instruction::Goto(_) => todo!(),
-        Instruction::IfElseGoto { .. } => todo!(),
+        Instruction::Goto(l) => {
+            let location = program.jmp_rel8(0);
+            let reloc = program.addr();
+            label_info.add_rel(l, location, LabelRelocType::Rel8(reloc));
+        }
+        Instruction::IfGoto {
+            lhs,
+            op,
+            rhs,
+            dest: good,
+        } => {
+            cmp(
+                program,
+                Term::from_value(lhs, vars, temps),
+                Term::from_value(rhs, vars, temps),
+            );
+            let location = match op {
+                BoolOperation::GTC => program.jg(0),
+                BoolOperation::LTC => program.jl(0),
+                BoolOperation::GTE => program.jge(0),
+                BoolOperation::LTE => program.jle(0),
+                _ => todo!(),
+            };
+            let jmp_reloc = program.addr();
+            label_info.add_rel(good, location, LabelRelocType::Rel8(jmp_reloc));
+
+            // if let Some(bad) = bad {
+            //     let location = program.jmp_rel8(0);
+            //     let reloc = program.addr();
+            //     label_info.add_rel(bad, location, LabelRelocType::Rel8(reloc));
+            // }
+        }
     }
 }
 

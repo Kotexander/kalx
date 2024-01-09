@@ -83,6 +83,11 @@ pub fn optimize_instruction(instruction: &mut Instruction) {
             optimize(Rc::get_mut(block).unwrap());
         }
         Instruction::Block(block) => optimize(Rc::get_mut(block).unwrap()),
+        Instruction::If { expr, block } => {
+            optimize_expr_and_replace(expr);
+            optimize(Rc::get_mut(block).unwrap());
+        },
+        
     }
 }
 

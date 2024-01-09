@@ -1,56 +1,97 @@
 {
 	var hello: str
 	var bye: str
-	var i: u32
+	var a: u32
+	var b: u32
+	var c: u32
+	var abc: u32
 	var s: str
-	var fi: u32
+	var i: u32
 	var fa: u32
 	var fb: u32
+	var fi: u32
+	var w: u32
+	var x: u32
+	var y: u32
+	var z: u32
+	var zdecl: str
 
 	hello = "Hello world!";
 	bye = "Goodbye world!\n";
 	printf("%s\n", hello);
 	printf(bye);
-	i = 0;
-	s = "hi ";
-	goto<0>;
+	a = 3;
+	b = 5;
+	c = a + b;
+	_0 = a * c;
+	_1 = b * c;
+	abc = _0 + _1;
+	printf("abc = %u\n", abc);
+	if (abc < 10) goto<0>;
+	goto<1>;
+	L<0>:
+	{
+	
+		printf("abc is greater then 10\n");
+	}
 	L<1>:
+	printf("\n");
+	s = "hi ";
+	i = 0;
+	goto<2>;
+	L<3>:
 	{
 		var j: u32
 	
 		printf(s);
 		printf("loop %u\n", i);
-		i = i + 1;
 		j = 0;
-		goto<2>;
-		L<3>:
+		goto<5>;
+		L<6>:
 		{
 		
 			printf("inner %u\n", j);
 			j = j + 1;
 		}
-		L<2>:
-		if j < 3 goto<3>;
+		L<5>:
+		if (j < 5) goto<6>;
+		if (j < 4) goto<6>;
+		L<7>:
+		i = i + 1;
 	}
-	L<0>:
-	if i < 10 goto<1>;
+	L<2>:
+	if (i >= 10) goto<4>;
+	if (i >= 5) goto<4>;
+	goto<3>;
+	L<4>:
 	printf("\n\nFibonacci:\n");
-	fi = 0;
 	fa = 0;
 	fb = 1;
-	goto<4>;
-	L<5>:
+	fi = 0;
+	goto<8>;
+	L<9>:
 	{
 		var ft: u32
 	
-		_0 = fi + 1;
-		printf("%+2u: %u\n", _0, fa);
+		_2 = fi + 1;
+		printf("%+2u: %u\n", _2, fa);
 		ft = fa + fb;
 		fa = fb;
 		fb = ft;
 		fi = fi + 1;
 	}
-	L<4>:
-	if fi < 48 goto<5>;
-	exit(0);
+	L<8>:
+	if (fi < 48) goto<9>;
+	goto<10>;
+	L<10>:
+	w = 5310;
+	printf("w = %u\n", w);
+	x = 10;
+	y = 5;
+	_3 = y + 1;
+	_4 = _3 * 5;
+	_5 = _4 * x;
+	z = _5 * y;
+	zdecl = "z = %u\n";
+	printf(zdecl, z);
 }

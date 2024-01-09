@@ -231,6 +231,14 @@ fn analyse_instruction(
             analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars)
         }
         Instruction::Block(block) => analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars),
+        Instruction::If { expr, block } => {
+            let typ = analyse_expr(expr, funs, &all_vars)?;
+            if typ != Type::Bool {
+                return Err(format!("while loop expects type `bool` by got `{typ}`"));
+            }
+            analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars)
+        },
+        
     }
 }
 

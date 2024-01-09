@@ -64,17 +64,37 @@ pub enum BoolOperation {
     Eql,
     And,
     Or_,
+    NEq,
+    NNd,
+    Nor,
 }
 impl BoolOperation {
-    fn switch(self) -> Self {
+    // fn switch(self) -> Self {
+    //     match self {
+    //         BoolOperation::GTC => BoolOperation::LTC,
+    //         BoolOperation::LTC => BoolOperation::GTC,
+    //         BoolOperation::GTE => BoolOperation::LTE,
+    //         BoolOperation::LTE => BoolOperation::GTE,
+    //         BoolOperation::Eql => BoolOperation::Eql,
+    //         BoolOperation::And => BoolOperation::And,
+    //         BoolOperation::Or_ => BoolOperation::Or_,
+    //     }
+    // }
+    // pub fn is_logic(&self) -> bool {
+    //     matches!(self, Self::And | Self::Or_)
+    // }
+    pub fn not(self) -> Self {
         match self {
-            BoolOperation::GTC => BoolOperation::LTC,
-            BoolOperation::LTC => BoolOperation::GTC,
-            BoolOperation::GTE => BoolOperation::LTE,
-            BoolOperation::LTE => BoolOperation::GTE,
-            BoolOperation::Eql => BoolOperation::Eql,
-            BoolOperation::And => BoolOperation::And,
-            BoolOperation::Or_ => BoolOperation::Or_,
+            BoolOperation::GTC => BoolOperation::LTE,
+            BoolOperation::LTC => BoolOperation::GTE,
+            BoolOperation::GTE => BoolOperation::LTC,
+            BoolOperation::LTE => BoolOperation::GTC,
+            BoolOperation::Eql => BoolOperation::NEq,
+            BoolOperation::And => BoolOperation::NNd,
+            BoolOperation::Or_ => BoolOperation::Nor,
+            BoolOperation::NEq => BoolOperation::Eql,
+            BoolOperation::NNd => BoolOperation::And,
+            BoolOperation::Nor => BoolOperation::Or_,
         }
     }
 }

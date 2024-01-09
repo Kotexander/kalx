@@ -1,37 +1,55 @@
 {
 	// var hello: str
 	// var bye: str
-	// var i: u32
+	// var a: u32
+	// var b: u32
+	// var c: u32
+	// var abc: u32
 	// var s: str
-	// var fi: u32
+	// var i: u32
 	// var fa: u32
 	// var fb: u32
+	// var fi: u32
+	// var w: u32
+	// var x: u32
+	// var y: u32
+	// var z: u32
+	// var zdecl: str
 
 	var hello = "Hello world!";
 	var bye = "Goodbye world!\n";
 	printf("%s\n", hello);
 	printf(bye);
-	var i = 0;
+	var a = 3;
+	var b = 5;
+	var c = (a + b);
+	var abc = ((a * c) + (b * c));
+	printf("abc = %u\n", abc);
+	if (abc < 10)
+	{
+		printf("abc is greater then 10\n");
+	}
+	printf("\n");
 	var s = "hi ";
-	while (i < 10)
+	var i = 0;
+	while ((i < 10) && (i < 5))
 	{
 		// var j: u32
 	
 		printf(s);
 		printf("loop %u\n", i);
-		i = (i + 1);
 		var j = 0;
-		while (j < 3)
+		while ((j < 5) || (j < 4))
 		{
-		
 			printf("inner %u\n", j);
 			j = (j + 1);
 		}
+		i = (i + 1);
 	}
 	printf("\n\nFibonacci:\n");
-	var fi = 0;
 	var fa = 0;
 	var fb = 1;
+	var fi = 0;
 	while (fi < 48)
 	{
 		// var ft: u32
@@ -42,5 +60,11 @@
 		fb = ft;
 		fi = (fi + 1);
 	}
-	exit(0);
+	var w = 5310;
+	printf("w = %u\n", w);
+	var x = 10;
+	var y = 5;
+	var z = ((((y + 1) * 5) * x) * y);
+	var zdecl = "z = %u\n";
+	printf(zdecl, z);
 }
