@@ -1,25 +1,17 @@
+fun test()
 {
-	var hello: str
-	var bye: str
 	var a: u32
 	var b: u32
 	var c: u32
 	var abc: u32
 	var s: str
 	var i: u32
-	var fa: u32
-	var fb: u32
-	var fi: u32
 	var w: u32
 	var x: u32
 	var y: u32
 	var z: u32
 	var zdecl: str
 
-	hello = "Hello world!";
-	bye = "Goodbye world!\n";
-	printf("%s\n", hello);
-	printf(bye);
 	a = 3;
 	b = 5;
 	c = a + b;
@@ -64,34 +56,54 @@
 	if (i >= 5) goto<4>;
 	goto<3>;
 	L<4>:
+	w = 5310;
+	printf("w = %u\n", w);
+	x = 10;
+	y = 5;
+	_2 = y + 1;
+	_3 = _2 * 5;
+	_4 = _3 * x;
+	z = _4 * y;
+	zdecl = "z = %u\n";
+	printf(zdecl, z);
+}
+fun main(argc: u32, argv: str)
+{
+	var hello: str
+	var bye: str
+
+	printf("num args: %u\n", argc);
+	hello = "Hello world!";
+	bye = "Goodbye world!\n";
+	printf("%s\n", hello);
+	printf(bye);
+	test();
+	fibonacci(48);
+}
+fun fibonacci(i: u32)
+{
+	var fa: u32
+	var fb: u32
+	var fi: u32
+
 	printf("\n\nFibonacci:\n");
 	fa = 0;
 	fb = 1;
 	fi = 0;
-	goto<8>;
-	L<9>:
+	goto<0>;
+	L<1>:
 	{
 		var ft: u32
 	
-		_2 = fi + 1;
-		printf("%+2u: %u\n", _2, fa);
+		_0 = fi + 1;
+		printf("%+2u: %u\n", _0, fa);
 		ft = fa + fb;
 		fa = fb;
 		fb = ft;
 		fi = fi + 1;
 	}
-	L<8>:
-	if (fi < 48) goto<9>;
-	goto<10>;
-	L<10>:
-	w = 5310;
-	printf("w = %u\n", w);
-	x = 10;
-	y = 5;
-	_3 = y + 1;
-	_4 = _3 * 5;
-	_5 = _4 * x;
-	z = _5 * y;
-	zdecl = "z = %u\n";
-	printf(zdecl, z);
+	L<0>:
+	if (fi < i) goto<1>;
+	goto<2>;
+	L<2>:
 }

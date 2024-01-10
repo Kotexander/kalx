@@ -1,32 +1,9 @@
 use std::rc::Rc;
 
 use crate::{
-    parser::{Block, DeclaredVars, Expression, Instruction},
+    parser::{Block, DeclaredVars, Expression, Function, Instruction},
     tokenizer::{Id, Type},
 };
-
-// #[derive(Debug, Clone)]
-// pub struct DeclaredVars(Vec<(Id, Type)>);
-// impl DeclaredVars {
-//     fn new() -> Self {
-//         Self(vec![])
-//     }
-//     fn get(&self, id: &Id) -> Option<Type> {
-//         self.0
-//             .iter()
-//             .rev()
-//             .find_map(|(vars_id, typ)| if *vars_id == *id { Some(*typ) } else { None })
-//     }
-//     fn contains(&self, id: &Id) -> bool {
-//     self.0.iter().rev().any(|(var_id, _)| *var_id == *id)
-//     }
-//     fn add(&mut self, id: Id, typ: Type) {
-//         // if self.contains(&id) {
-//         // panic!("Vars already has `{id}` of type `{typ}`");
-//         // }
-//         self.0.push((id, typ))
-//     }
-// }
 
 #[derive(Debug, Clone)]
 pub enum ArgLayout {
@@ -81,10 +58,17 @@ impl DeclaredFuns {
 
         Self(funs)
     }
-    fn get(&self, id: &Id) -> Option<&DeclaredFun> {
+    fn add(&mut self, name: Id, args: ArgLayout, ret: Type) {
+        if self.get(&name).is_some() {
+            panic!()
+        } else {
+            self.0.push((name, DeclaredFun { args, ret }));
+        }
+    }
+    fn get(&self, name: &Id) -> Option<&DeclaredFun> {
         self.0.iter().find_map(
             |(fun_id, fun)| {
-                if *fun_id == *id {
+                if *fun_id == *name {
                     Some(fun)
                 } else {
                     None
@@ -94,6 +78,7 @@ impl DeclaredFuns {
     }
 }
 
+#[derive(Debug, Clone)]
 struct AllVars<'a> {
     vars: Vec<&'a DeclaredVars>,
 }
@@ -154,17 +139,22 @@ fn analyse_expr(
                 ))
             }
         }
-        Expression::Index { expr, index } => {
+        Expression::Index { base: expr, index } => {
             let typ = analyse_expr(expr, funs, all_vars)?;
-            let i = analyse_expr(index, funs, all_vars)?;
-
-            if i == Type::U32 {
-                Ok(typ)
-            } else {
-                Err(format!("index must have type of `u32` but got `{i}`"))
+            if let Type::Array(typ) = typ {
+                let i = analyse_expr(index, funs, all_vars)?;
+    
+                if i == Type::U32 {
+                    Ok(*typ)
+                } else {
+                    Err(format!("index must have type of `u32` but got `{i}`"))
+                }
+            }
+            else {
+                Err(format!("tried indexing `{typ}`"))
             }
         }
-        Expression::Function { name, args } => {
+        Expression::FunctionCall { name, args } => {
             let mut arg_typs = vec![];
             for expr in args.iter() {
                 let typ = analyse_expr(expr, funs, all_vars)?;
@@ -178,12 +168,21 @@ fn analyse_expr(
                             fun.args, args
                         ))
                     } else {
-                        Ok(fun.ret)
+                        Ok(fun.ret.clone())
                     }
                 }
                 None => Err(format!("unkown function `{name}`")),
             }
         }
+        Expression::Deref(expr) => {
+            let typ = analyse_expr(expr, funs, all_vars)?;
+            if let Type::Ptr(typ) = typ {
+                Ok(*typ)
+            }
+            else {
+                Err(format!("tried dereferencing a `{typ}`"))
+            }
+        },
     }
 }
 
@@ -211,9 +210,15 @@ fn analyse_instruction(
             }
         }
         Instruction::Assign { id, value } => {
-            if all_vars.contains(id) {
-                analyse_expr(value, funs, &all_vars)?;
-                Ok(())
+            if let Some(var) = all_vars.get(id) {
+                let typ = analyse_expr(value, funs, &all_vars)?;
+                if var == typ {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "tried assigning `{typ}` to `{id}` which is of type `{var}`"
+                    ))
+                }
             } else {
                 Err(format!("assignment of `{id}` before declaration"))
             }
@@ -226,7 +231,7 @@ fn analyse_instruction(
         Instruction::While { expr, block } => {
             let typ = analyse_expr(expr, funs, &all_vars)?;
             if typ != Type::Bool {
-                return Err(format!("while loop expects type `bool` by got `{typ}`"));
+                return Err(format!("while loop expects type `bool` but got `{typ}`"));
             }
             analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars)
         }
@@ -234,11 +239,10 @@ fn analyse_instruction(
         Instruction::If { expr, block } => {
             let typ = analyse_expr(expr, funs, &all_vars)?;
             if typ != Type::Bool {
-                return Err(format!("while loop expects type `bool` by got `{typ}`"));
+                return Err(format!("if statement expects type `bool` but got `{typ}`"));
             }
             analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars)
-        },
-        
+        }
     }
 }
 
@@ -255,8 +259,25 @@ fn analyse_block(
     Ok(())
 }
 
-pub fn analyse(block: &mut Block) -> Result<(), String> {
-    let funs = DeclaredFuns::new();
-    let all_vars = AllVars::new();
-    analyse_block(block, &funs, &all_vars)
+pub fn analyse(functions: &mut [Function]) -> Result<(), String> {
+    let mut funs = DeclaredFuns::new();
+    for function in functions.iter() {
+        let args = ArgLayout::List(function.args.iter().map(|(_, typ)| typ.clone()).collect());
+        funs.add(
+            function.name.clone(),
+            args,
+            function.ret.clone(),
+        );
+    }
+    for function in functions.iter_mut() {
+        let mut function_args = DeclaredVars::new();
+        for (name, typ) in function.args.iter() {
+            function_args.add(name.clone(), typ.clone());
+        }
+        let mut all_vars = AllVars::new();
+        all_vars.vars.push(&function_args);
+        analyse_block(Rc::get_mut(&mut function.block).unwrap(), &funs, &all_vars)?;
+    }
+
+    Ok(())
 }

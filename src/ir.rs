@@ -2,7 +2,7 @@ use std::{ffi::CString, fmt::Display, rc::Rc};
 
 use crate::{
     parser::{self, DeclaredVars},
-    tokenizer::{BoolOperation, Id, Operation},
+    tokenizer::{BoolOperation, Id, Operation, Type},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +11,8 @@ pub enum Value {
     Temp(u32),
     Num(u32),
     String(Rc<CString>),
+    Deref(Box<Self>),
+    Index { base: Box<Self>, index: Box<Self> },
 }
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -19,6 +21,8 @@ impl Display for Value {
             Value::Temp(num) => write!(f, "_{num}"),
             Value::Num(num) => write!(f, "{num}"),
             Value::String(string) => write!(f, "{string:?}"),
+            Value::Deref(v) => write!(f, "@{v}"),
+            Value::Index { base: b, index: i } => write!(f, "{b}[{i}]"),
         }
     }
 }
@@ -37,6 +41,28 @@ impl LabelGen {
     }
 }
 
+pub struct Function {
+    pub name: Id,
+    pub args: Vec<(Id, Type)>,
+    pub block: Block,
+}
+impl Display for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fun {}(", self.name.0)?;
+        if self.args.is_empty() {
+            write!(f, ")")?;
+        } else {
+            let last = self.args.len() - 1;
+            for (id, typ) in &self.args[..last] {
+                write!(f, "{id}: {typ}, ")?;
+            }
+            let (id, typ) = &self.args[last];
+            write!(f, "{id}: {typ})")?;
+        }
+        write!(f, "\n{}", self.block)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Instruction {
     Assign {
@@ -49,7 +75,7 @@ pub enum Instruction {
         op: Operation,
         rhs: Value,
     },
-    Function {
+    FunctionCall {
         name: Id,
         args: Vec<Value>,
     },
@@ -65,6 +91,7 @@ pub enum Instruction {
         rhs: Value,
         dest: Label,
     },
+    // Deref(Value),
 }
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -76,7 +103,7 @@ impl Display for Instruction {
                 op,
                 rhs,
             } => write!(f, "{target} = {lhs} {op} {rhs};"),
-            Instruction::Function { name, args } => {
+            Instruction::FunctionCall { name, args } => {
                 if !args.is_empty() {
                     let last = args.len() - 1;
                     write!(f, "{name}(")?;
@@ -120,7 +147,7 @@ impl Display for Instruction {
             } => {
                 let op = Operation::Bool(*op);
                 write!(f, "if ({lhs} {op} {rhs}) {}", Self::Goto(*good),)
-            }
+            } // Instruction::Deref(value) => write!(""),
         }
     }
 }
@@ -160,9 +187,23 @@ fn generate_temp_expr(code: &mut Block, expr: &parser::Expression, temp: &mut u3
             });
             value
         }
-        parser::Expression::Index { expr: _, index: _ } => todo!(),
-        parser::Expression::Function { name: _, args: _ } => {
+        parser::Expression::Index { base, index } => {
+            let base_value = generate_temp_expr(code, base, temp);
+            let index_value = generate_temp_expr(code, index, temp);
+            let value = Value::Temp(*temp);
+            *temp += 1;
+            code.0.push(Instruction::Assign {
+                target: value.clone(),
+                value: Value::Index { base: Box::new(base_value), index: Box::new(index_value) },
+            });
+            value
+        }
+        parser::Expression::FunctionCall { name: _, args: _ } => {
             todo!()
+        }
+        parser::Expression::Deref(expr) => {
+            let value = generate_temp_expr(code, expr, temp);
+            Value::Deref(Box::new(value))
         }
     }
 }
@@ -224,7 +265,7 @@ fn generate_bool_expr(
                         generate_bool_expr(code, rhs, dest, temp, label, false, rhs.is_next_bool());
                     }
                     BoolOperation::NNd => todo!(),
-                    BoolOperation::Nor => todo!(),
+                    BoolOperation::NOr => todo!(),
                     _ => panic!(),
                 },
                 (false, false) => {
@@ -285,18 +326,19 @@ fn generate_expr(code: &mut Block, expr: &parser::Expression, target: Value, tem
                 rhs: rhs_value,
             });
         }
-        parser::Expression::Index { expr: _, index: _ } => todo!(),
-        parser::Expression::Function { name, args } => {
+        parser::Expression::Index { base: _, index: _ } => todo!(),
+        parser::Expression::FunctionCall { name, args } => {
             let mut arg_values = vec![];
             for arg in args.iter() {
                 arg_values.push(generate_temp_expr(code, arg, temp));
             }
 
-            code.0.push(Instruction::Function {
+            code.0.push(Instruction::FunctionCall {
                 name: name.clone(),
                 args: arg_values,
             });
         }
+        parser::Expression::Deref(_) => todo!(),
     }
 }
 
@@ -364,8 +406,7 @@ fn generate_instruction(
             code.0.push(Instruction::Label(good_l));
             generate_block(code, Rc::into_inner(block).unwrap(), temp, label);
             code.0.push(Instruction::Label(bad_l));
-        },
-        
+        }
     }
 }
 
@@ -385,9 +426,22 @@ fn generate_block(code: &mut Block, block: parser::Block, temp: &mut u32, label:
     });
 }
 
-pub fn generate(block: parser::Block) -> Block {
-    let mut code = Block::new();
-    let mut label = LabelGen::new();
-    generate_block(&mut code, block, &mut 0, &mut label);
-    code
+pub fn generate(functions: Vec<parser::Function>) -> Vec<Function> {
+    let mut ir_functions = vec![];
+    for function in functions {
+        let mut code = Block::new();
+        let mut label = LabelGen::new();
+        generate_block(
+            &mut code,
+            Rc::into_inner(function.block).unwrap(),
+            &mut 0,
+            &mut label,
+        );
+        ir_functions.push(Function {
+            name: function.name,
+            args: function.args,
+            block: code,
+        });
+    }
+    ir_functions
 }

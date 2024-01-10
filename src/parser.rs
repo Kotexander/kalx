@@ -9,10 +9,13 @@ impl DeclaredVars {
         Self(vec![])
     }
     pub fn get(&self, id: &Id) -> Option<Type> {
-        self.0
-            .iter()
-            .rev()
-            .find_map(|(vars_id, typ)| if *vars_id == *id { Some(*typ) } else { None })
+        self.0.iter().rev().find_map(|(vars_id, typ)| {
+            if *vars_id == *id {
+                Some(typ.clone())
+            } else {
+                None
+            }
+        })
     }
     pub fn contains(&self, id: &Id) -> bool {
         self.0.iter().rev().any(|(var_id, _)| *var_id == *id)
@@ -99,24 +102,27 @@ pub enum Expression {
     String(Rc<CString>),
     Ident(Id),
     Operation {
-        lhs: Rc<Expression>,
+        lhs: Rc<Self>,
         op: Operation,
-        rhs: Rc<Expression>,
+        rhs: Rc<Self>,
     },
     Index {
-        expr: Rc<Expression>,
-        index: Rc<Expression>,
+        base: Rc<Self>,
+        index: Rc<Self>,
     },
-    Function {
+    FunctionCall {
         name: Id,
-        args: Vec<Rc<Expression>>,
+        args: Vec<Rc<Self>>,
     },
+    Deref(Rc<Self>),
 }
 impl Expression {
     pub fn is_recursive(&self) -> bool {
         matches!(
             self,
-            Expression::Operation { .. } | Expression::Index { .. } | Expression::Function { .. }
+            Expression::Operation { .. }
+                | Expression::Index { .. }
+                | Expression::FunctionCall { .. }
         )
     }
     pub fn is_const(&self) -> bool {
@@ -145,8 +151,8 @@ impl Display for Expression {
             Expression::String(string) => write!(f, "{string:?}"),
             Expression::Ident(id) => write!(f, "{id}"),
             Expression::Operation { lhs, op, rhs } => write!(f, "({lhs} {op} {rhs})"),
-            Expression::Index { expr, index } => write!(f, "{expr}[{index}]"),
-            Expression::Function { name, args } => {
+            Expression::Index { base, index } => write!(f, "{base}[{index}]"),
+            Expression::FunctionCall { name, args } => {
                 if !args.is_empty() {
                     let last = args.len() - 1;
                     write!(f, "{name}(")?;
@@ -158,7 +164,37 @@ impl Display for Expression {
                     write!(f, "{name}()")
                 }
             }
+            Expression::Deref(expr) => {
+                write!(f, "@{expr}")
+            }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub name: Id,
+    pub args: Vec<(Id, Type)>,
+    pub block: Rc<Block>,
+    pub ret: Type,
+}
+impl Display for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fun {}(", self.name.0)?;
+        if self.args.is_empty() {
+            write!(f, ")")?;
+        } else {
+            let last = self.args.len() - 1;
+            for (id, typ) in &self.args[..last] {
+                write!(f, "{id}: {typ}, ")?;
+            }
+            let (id, typ) = &self.args[last];
+            write!(f, "{id}: {typ})")?;
+        }
+        // if self.ret != Type::Void {
+        write!(f, " -> {}", self.ret)?;
+        // }
+        write!(f, "\n{}", self.block)
     }
 }
 
@@ -168,6 +204,17 @@ pub enum AST {
     Instruction(Rc<Instruction>),
     Block(Rc<Block>),
     Expression(Rc<Expression>),
+    Function(Function),
+}
+impl Display for AST {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AST::Instruction(i) => write!(f, "{i}"),
+            AST::Block(b) => write!(f, "{b}"),
+            AST::Expression(e) => write!(f, "{e}"),
+            AST::Function(fun) => write!(f, "{fun}"),
+        }
+    }
 }
 impl From<Rc<Block>> for AST {
     fn from(value: Rc<Block>) -> Self {
@@ -182,6 +229,11 @@ impl From<Rc<Instruction>> for AST {
 impl From<Rc<Expression>> for AST {
     fn from(value: Rc<Expression>) -> Self {
         Self::Expression(value)
+    }
+}
+impl From<Function> for AST {
+    fn from(value: Function) -> Self {
+        Self::Function(value)
     }
 }
 
@@ -213,6 +265,21 @@ impl Nodes {
     fn push(&mut self, node: impl Into<Node>) {
         let node = node.into();
         self.0.push(node);
+    }
+}
+impl Display for Nodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for node in self.0.iter() {
+            match node {
+                Node::Token(t) => {
+                    writeln!(f, "Token: {t}")?;
+                }
+                Node::AST(a) => {
+                    writeln!(f, "{a}")?;
+                }
+            }
+        }
+        std::fmt::Result::Ok(())
     }
 }
 
@@ -272,10 +339,12 @@ fn parse_function(nodes: &mut Nodes) -> bool {
     if let Node::Token(Token::PClose) = nodes.0[last] {
         let mut i = last - 1;
         let mut args = vec![];
+
         if let Node::AST(AST::Expression(expr)) = &nodes.0[i] {
-            args.push(expr.clone());
             i -= 1;
+            args.push(expr.clone());
         }
+
         loop {
             match &nodes.0[i] {
                 Node::Token(Token::Comma) => {
@@ -286,19 +355,8 @@ fn parse_function(nodes: &mut Nodes) -> bool {
                     }
                 }
                 Node::Token(Token::POpen) => {
-                    if let Some(Node::Token(Token::Ident(id))) = &nodes.0.get(i - 1) {
-                        args.reverse();
-                        let node: AST = Rc::new(Expression::Function {
-                            name: id.clone(),
-                            args,
-                        })
-                        .into();
-                        nodes.reduce(last - i + 2);
-                        nodes.push(node);
-                        return true;
-                    } else {
-                        return false;
-                    }
+                    i -= 1;
+                    break;
                 }
                 _ => {
                     return false;
@@ -310,18 +368,127 @@ fn parse_function(nodes: &mut Nodes) -> bool {
             }
             i -= 2;
         }
+
+        if let Some(Node::Token(Token::Ident(id))) = &nodes.0.get(i) {
+            args.reverse();
+            let node: AST = Rc::new(Expression::FunctionCall {
+                name: id.clone(),
+                args,
+            })
+            .into();
+            nodes.reduce(last - i + 1);
+            nodes.push(node);
+            true
+        } else {
+            false
+        }
     } else {
-        #[allow(clippy::needless_return)]
-        return false;
+        false
     }
 }
 
+fn get_arg(nodes: &Nodes, from: usize) -> Option<(Id, Type)> {
+    if let Some(Node::Token(Token::Type(typ))) = &nodes.0.get(from) {
+        if let Some(Node::Token(Token::Colon)) = &nodes.0.get(from - 1) {
+            if let Some(Node::Token(Token::Ident(id))) = &nodes.0.get(from - 2) {
+                return Some((id.clone(), typ.clone()));
+            }
+        }
+    }
+    None
+}
+
+fn parse_function_declaration(nodes: &mut Nodes) -> bool {
+    let len = nodes.0.len();
+    if len < 6 {
+        return false;
+    }
+    let last = len - 1;
+    let mut ret = Type::Void;
+    // end of function (block)
+    if let Node::AST(AST::Block(block)) = &nodes.0[last] {
+        let mut i = last - 1;
+        if let Node::Token(Token::Type(typ)) = &nodes.0[i] {
+            i -= 1;
+            if let Node::Token(Token::Arrow) = nodes.0[i] {
+                i -= 1;
+                ret = typ.clone();
+            } else {
+                return false;
+            }
+        }
+
+        if let Node::Token(Token::PClose) = nodes.0[i] {
+            i -= 1;
+            let mut args = vec![];
+
+            if let Some(arg) = get_arg(nodes, i) {
+                i -= 3;
+                args.push(arg);
+            }
+
+            if let Node::Token(Token::Type(Type::Void)) = &nodes.0[i] {
+                i -= 1;
+                if let Node::Token(Token::POpen) = &nodes.0[i] {
+                    i -= 1;
+                } else {
+                    return false;
+                }
+            } else {
+                loop {
+                    match &nodes.0[i] {
+                        Node::Token(Token::Comma) => {
+                            if let Some(arg) = get_arg(nodes, i - 1) {
+                                i -= 3;
+                                args.push(arg);
+                            } else {
+                                return false;
+                            }
+                        }
+                        Node::Token(Token::POpen) => {
+                            i -= 1;
+                            break;
+                        }
+                        _ => {
+                            return false;
+                        }
+                    }
+                    if i == 0 {
+                        return false;
+                    }
+                    i -= 1;
+                }
+            }
+            if let Some(Node::Token(Token::Ident(id))) = &nodes.0.get(i) {
+                i -= 1;
+                if let Some(Node::Token(Token::Fun)) = &nodes.0.get(i) {
+                    args.reverse();
+                    let node: AST = Function {
+                        name: id.clone(),
+                        args,
+                        block: block.clone(),
+                        ret,
+                    }
+                    .into();
+                    nodes.reduce(last - i + 1);
+                    nodes.push(node);
+                }
+            }
+
+            false
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
 // use Expression::*;
 // use Instruction::*;
 // use Token::*;
 // use Node::*;
 // use AST::*;
-pub fn parse(code: &str) -> Result<Rc<Block>, String> {
+pub fn parse(code: &str) -> Result<Vec<Function>, String> {
     let mut tokenizer = Tokenizer::new(code).peekable();
 
     let mut nodes = Nodes::new();
@@ -330,7 +497,10 @@ pub fn parse(code: &str) -> Result<Rc<Block>, String> {
         nodes.push(token);
 
         loop {
-            let repeat = if parse_function(&mut nodes) || parse_block(&mut nodes) {
+            let repeat = if parse_function(&mut nodes)
+                || parse_block(&mut nodes)
+                || parse_function_declaration(&mut nodes)
+            {
                 true
             } else {
                 match &nodes.0[..] {
@@ -362,6 +532,32 @@ pub fn parse(code: &str) -> Result<Rc<Block>, String> {
                             true
                         }
                     }
+                    // [typ] -> typ
+                    [.., Node::Token(Token::SOpen), Node::Token(Token::Type(typ)), Node::Token(Token::SClose)] =>
+                    {
+                        let node = Token::Type(Type::Array(Box::new(typ.clone())));
+                        nodes.reduce(3);
+                        nodes.push(node);
+                        true
+                    }
+                    // #typ -> typ
+                    [.., Node::Token(Token::Ref), Node::Token(Token::Type(typ))] => {
+                        let node = Token::Type(Type::Ptr(Box::new(typ.clone())));
+                        nodes.reduce(2);
+                        nodes.push(node);
+                        true
+                    }
+                    // #expr -> expr
+                    [.., Node::Token(Token::Ref), Node::AST(AST::Expression(_expr))] => {
+                        todo!()
+                    }
+                    // @expr -> expr
+                    [.., Node::Token(Token::Deref), Node::AST(AST::Expression(expr))] => {
+                        let node: AST = Rc::new(Expression::Deref(expr.clone())).into();
+                        nodes.reduce(2);
+                        nodes.push(node);
+                        true
+                    }
                     // expr op expr
                     [.., Node::AST(AST::Expression(lhs)), Node::Token(Token::Operation(op)), Node::AST(AST::Expression(rhs))] =>
                     {
@@ -386,10 +582,10 @@ pub fn parse(code: &str) -> Result<Rc<Block>, String> {
                         }
                     }
                     // expr[expr]
-                    [.., Node::AST(AST::Expression(expr)), Node::Token(Token::SOpen), Node::AST(AST::Expression(index)), Node::Token(Token::BClose)] =>
+                    [.., Node::AST(AST::Expression(expr)), Node::Token(Token::SOpen), Node::AST(AST::Expression(index)), Node::Token(Token::SClose)] =>
                     {
                         let node: AST = Rc::new(Expression::Index {
-                            expr: expr.clone(),
+                            base: expr.clone(),
                             index: index.clone(),
                         })
                         .into();
@@ -494,16 +690,17 @@ pub fn parse(code: &str) -> Result<Rc<Block>, String> {
             }
         }
     }
-
-    if nodes.0.len() != 1 {
-        Err(format!("Node list is not 1! Nodes not reduced: {nodes:#?}"))
-    } else {
-        let node = nodes.0.pop().unwrap();
-        match node {
-            Node::AST(AST::Block(block)) => Ok(block),
-            _ => Err(format!(
-                "expected last node to be a block, but got {node:#?}"
-            )),
-        }
-    }
+    let err = format!("not a list of functions:\n{nodes}");
+    nodes
+        .0
+        .into_iter()
+        .try_fold(vec![], |mut acc, function| {
+            if let Node::AST(AST::Function(fun)) = function {
+                acc.push(fun);
+                Ok(acc)
+            } else {
+                Err(())
+            }
+        })
+        .map_err(|_| err)
 }

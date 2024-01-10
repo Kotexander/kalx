@@ -13,17 +13,21 @@ impl Display for Id {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     String,
     U32,
+    U8,
     Bool,
     Void,
+    Ptr(Box<Self>),
+    Array(Box<Self>),
 }
 impl Type {
     pub fn parse(typ: &str) -> Option<Self> {
         let typ = match typ {
             "u32" => Self::U32,
+            "u8" => Self::U8,
             "str" => Self::String,
             "bool" => Self::Bool,
             "void" => Self::Void,
@@ -37,20 +41,44 @@ impl Type {
         match self {
             Type::String => 4,
             Type::U32 => 4,
-            Type::Bool => 0,
-            Type::Void => 1,
+            Type::U8 => 1,
+            Type::Bool => 1,
+            Type::Void => 0,
+            Type::Ptr(_) => 4,
+            Type::Array(_) => 4,
         }
+    }
+    const MAPPING: &'static [(&'static str, Self)] = &[
+        ("str", Self::String),
+        ("u32", Self::U32),
+        ("u8", Self::U8),
+        ("bool", Self::Bool),
+        ("void", Self::Void),
+    ];
+}
+impl TryFrom<&str> for Type {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::MAPPING
+            .iter()
+            .find_map(|(s, t)| if *s == value { Some(t.clone()) } else { None })
+            .ok_or(())
     }
 }
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Type::String => "str",
-            Type::U32 => "u32",
-            Type::Bool => "bool",
-            Type::Void => "void",
-        };
-        write!(f, "{s}")
+        match self {
+            Type::Ptr(t) => write!(f, "{t}"),
+            Type::Array(t) => write!(f, "{t}"),
+            _ => {
+                let s = Self::MAPPING
+                    .iter()
+                    .find_map(|(s, t)| if *t == *self { Some(s) } else { None })
+                    .unwrap();
+                write!(f, "{s}")
+            }
+        }
     }
 }
 
@@ -66,7 +94,7 @@ pub enum BoolOperation {
     Or_,
     NEq,
     NNd,
-    Nor,
+    NOr,
 }
 impl BoolOperation {
     // fn switch(self) -> Self {
@@ -91,10 +119,10 @@ impl BoolOperation {
             BoolOperation::LTE => BoolOperation::GTC,
             BoolOperation::Eql => BoolOperation::NEq,
             BoolOperation::And => BoolOperation::NNd,
-            BoolOperation::Or_ => BoolOperation::Nor,
+            BoolOperation::Or_ => BoolOperation::NOr,
             BoolOperation::NEq => BoolOperation::Eql,
             BoolOperation::NNd => BoolOperation::And,
-            BoolOperation::Nor => BoolOperation::Or_,
+            BoolOperation::NOr => BoolOperation::Or_,
         }
     }
 }
@@ -112,12 +140,13 @@ pub enum Operation {
 }
 impl Display for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = Self::MAPPING
-            .iter()
-            .find_map(|(s, op)| if *self == *op { Some(s) } else { None })
-            .unwrap();
-
-        write!(f, "{s}")
+        let op = Token::Operation(*self);
+        for (s, t) in Token::STRICT_MAPPING.iter().chain(Token::MAPPING.iter()) {
+            if *t == op {
+                return write!(f, "{s}");
+            }
+        }
+        unreachable!();
     }
 }
 impl Operation {
@@ -141,37 +170,12 @@ impl Operation {
         )
     }
 
-    pub fn from_start(string: &str) -> Option<(Self, usize)> {
-        for (op_str, op) in Operation::MAPPING.iter() {
-            if string.starts_with(op_str) {
-                return Some((*op, op_str.len()));
-            }
-        }
-        None
-    }
-
     pub fn is_bool_op(&self) -> bool {
         matches!(self, Operation::Bool(_))
     }
-
-    const MAPPING: &'static [(&'static str, Self)] = &[
-        (">=", Self::Bool(BoolOperation::GTE)),
-        ("<=", Self::Bool(BoolOperation::LTE)),
-        ("&&", Self::Bool(BoolOperation::And)),
-        ("||", Self::Bool(BoolOperation::Or_)),
-        ("==", Self::Bool(BoolOperation::Eql)),
-        ("+", Self::Add),
-        ("-", Self::Sub),
-        ("*", Self::Mul),
-        ("/", Self::Div),
-        (">", Self::Bool(BoolOperation::GTC)),
-        ("<", Self::Bool(BoolOperation::LTC)),
-        ("&", Self::BND),
-        ("|", Self::BOR),
-    ];
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     Var,
     Loop,
@@ -184,6 +188,10 @@ pub enum Token {
     Operation(Operation),
     If,
     Else,
+    Fun,
+    Arrow,
+    Ref,
+    Deref,
     // symbols
     Semicolon,
     Colon,
@@ -197,55 +205,112 @@ pub enum Token {
     Comma,
 }
 impl Token {
-    /// doesn't do symbols
     fn parse(token: String) -> Self {
-        let token = match token.as_str() {
-            "var" => Self::Var,
-            "loop" => Self::Loop,
-            "while" => Self::While,
-            "true" => Self::Bool(true),
-            "false" => Self::Bool(false),
-            "if" => Self::If,
-            "else" => Self::Else,
-            _ => {
-                // string
-                if token.starts_with('"') && token.ends_with('"') {
-                    let string = token.trim_matches('"').replace("\\n", "\n");
-                    Self::String(Rc::new(string))
-                }
-                // type
-                else if let Some(typ) = Type::parse(&token) {
-                    Self::Type(typ)
-                }
-                // number
-                else if let Ok(num) = u32::from_str_radix(&token, 10) {
-                    Self::Number(num)
-                }
-                // identifier
-                else {
-                    Self::Ident(Rc::new(token).into())
-                }
+        if let Some(token) =
+            Self::MAPPING
+                .iter()
+                .find_map(|(s, t)| if *s == token { Some(t.clone()) } else { None })
+        {
+            token
+        } else {
+            // string
+            if token.starts_with('"') && token.ends_with('"') {
+                let string = token.trim_matches('"').replace("\\n", "\n");
+                Self::String(Rc::new(string))
             }
-        };
-        token
+            // type
+            else if let Some(typ) = Type::parse(&token) {
+                Self::Type(typ)
+            }
+            // number
+            else if let Ok(num) = u32::from_str_radix(&token, 10) {
+                Self::Number(num)
+            }
+            // identifier
+            else {
+                Self::Ident(Rc::new(token).into())
+            }
+        }
     }
     fn symbol(sym: char) -> Option<Self> {
-        let sym = match sym {
-            ';' => Token::Semicolon,
-            ':' => Token::Colon,
-            '=' => Token::Equal,
-            '{' => Token::BOpen,
-            '}' => Token::BClose,
-            '(' => Token::POpen,
-            ')' => Token::PClose,
-            '[' => Token::SOpen,
-            ']' => Token::SClose,
-            ',' => Token::Comma,
-            _ => {
-                return None;
+        Self::MAPPING.iter().find_map(|(s, t)| {
+            if s.len() == 1 && s.chars().next().unwrap() == sym {
+                Some(t.clone())
+            } else {
+                None
             }
-        };
-        Some(sym)
+        })
+    }
+    pub fn from_strict(string: &str) -> Option<(Token, usize)> {
+        for (op_str, op) in Self::STRICT_MAPPING.iter() {
+            if string.starts_with(op_str) {
+                return Some((op.clone(), op_str.len()));
+            }
+        }
+        None
+    }
+
+    const MAPPING: &'static [(&'static str, Self)] = &[
+        (";", Self::Semicolon),
+        (":", Self::Colon),
+        ("=", Self::Equal),
+        ("{", Self::BOpen),
+        ("}", Self::BClose),
+        ("(", Self::POpen),
+        (")", Self::PClose),
+        ("[", Self::SOpen),
+        ("]", Self::SClose),
+        (",", Self::Comma),
+        ("if", Self::If),
+        ("var", Self::Var),
+        ("fun", Self::Fun),
+        ("else", Self::Else),
+        ("true", Self::Bool(true)),
+        ("loop", Self::Loop),
+        ("false", Self::Bool(false)),
+        ("while", Self::While),
+    ];
+
+    const STRICT_MAPPING: &'static [(&'static str, Self)] = &[
+        (">=", Self::Operation(Operation::Bool(BoolOperation::GTE))),
+        ("<=", Self::Operation(Operation::Bool(BoolOperation::LTE))),
+        ("&&", Self::Operation(Operation::Bool(BoolOperation::And))),
+        ("||", Self::Operation(Operation::Bool(BoolOperation::Or_))),
+        ("!&", Self::Operation(Operation::Bool(BoolOperation::NNd))),
+        ("!|", Self::Operation(Operation::Bool(BoolOperation::NOr))),
+        ("==", Self::Operation(Operation::Bool(BoolOperation::Eql))),
+        ("!=", Self::Operation(Operation::Bool(BoolOperation::NEq))),
+        ("->", Self::Arrow),
+        ("#", Self::Ref),
+        ("@", Self::Deref),
+        ("+", Self::Operation(Operation::Add)),
+        ("-", Self::Operation(Operation::Sub)),
+        ("*", Self::Operation(Operation::Mul)),
+        ("/", Self::Operation(Operation::Div)),
+        (">", Self::Operation(Operation::Bool(BoolOperation::GTC))),
+        ("<", Self::Operation(Operation::Bool(BoolOperation::LTC))),
+        ("&", Self::Operation(Operation::BND)),
+        ("|", Self::Operation(Operation::BOR)),
+    ];
+}
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Ident(id) => write!(f, "{}", id.0),
+            Token::Number(n) => write!(f, "{n}"),
+            Token::String(s) => write!(f, "{s}"),
+            Token::Bool(b) => write!(f, "{b}"),
+            Token::Type(t) => write!(f, "{t}"),
+            Token::Operation(op) => write!(f, "{op}"),
+            _ => {
+                for (s, t) in Self::MAPPING.iter().chain(Self::STRICT_MAPPING.iter()) {
+                    if t == self {
+                        return write!(f, "{s}");
+                    }
+                }
+                unreachable!()
+            }
+        }
     }
 }
 pub struct Tokenizer<'a> {
@@ -302,11 +367,11 @@ impl<'a> Iterator for Tokenizer<'a> {
         if sym.is_some() {
             return sym;
         }
-        if let Some((op, len)) = Operation::from_start(&self.code[start..]) {
+        if let Some((t, len)) = Token::from_strict(&self.code[start..]) {
             for _ in 1..len {
                 self.code_chars.next();
             }
-            return Some(Token::Operation(op));
+            return Some(t);
         }
         let mut end = start;
 
@@ -316,7 +381,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             if !is_string
                 && (c.is_whitespace()
                     || Token::symbol(*c).is_some()
-                    || Operation::from_start(&self.code[*i..]).is_some())
+                    || Token::from_strict(&self.code[*i..]).is_some())
             {
                 break;
             }

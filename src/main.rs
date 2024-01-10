@@ -1,6 +1,6 @@
 mod elf;
 
-use std::{process::exit, rc::Rc};
+use std::process::exit;
 
 use elf::*;
 
@@ -25,7 +25,7 @@ struct ProcessedStrs {
     data: Vec<u8>,
     symbols: Vec<ProcessedStrSymbol>,
 }
-fn process_strs(strs: x86_generator::Strings) -> ProcessedStrs {
+fn process_strs(strs: x86_generator::RelStrings) -> ProcessedStrs {
     let data = strs
         .0
         .iter()
@@ -59,15 +59,24 @@ fn run<E: Endian>() -> Result<(), String> {
     let _ = std::fs::remove_file("output/main");
     let code = std::fs::read_to_string("main.kx").unwrap();
 
-    let mut block = Rc::into_inner(parser::parse(&code)?).unwrap();
-    optimizer::optimize(&mut block);
-    analyser::analyse(&mut block)?;
-    let _ = std::fs::write("main.kx.reformatted", format!("{block}"));
+    let mut functions = parser::parse(&code)?;
+    optimizer::optimize(&mut functions);
+    analyser::analyse(&mut functions)?;
 
-    let ir_code = ir::generate(block);
-    let _ = std::fs::write("main.kx.ir", format!("{ir_code}"));
-
-    let (text, rel_info) = x86_generator::generate::<E>(&ir_code);
+    let _ = std::fs::create_dir("dump");
+    let mut reformated_file = String::new();
+    for function in functions.iter() {
+        reformated_file += &format!("{function}\n");
+    }
+    let _ = std::fs::write("dump/main.kx.reformatted", reformated_file);
+    
+    let ir_functions = ir::generate(functions);
+    let mut ir_file = String::new();
+    for function in ir_functions.iter() {
+        ir_file += &format!("{function}");
+    }
+    let _ = std::fs::write("dump/main.kx.ir", ir_file);
+    let (text, rel_info, funs) = x86_generator::generate::<E>(&ir_functions);
     let processed_strs = process_strs(rel_info.strs);
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
@@ -145,14 +154,18 @@ fn run<E: Endian>() -> Result<(), String> {
 
     // start of global symbols
     sym_table.set_info();
-    sym_table.add(
-        "main",
-        SymbolEntry::<E> {
-            info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
-            shndx: U16::new(2),
-            ..Default::default()
-        },
-    );
+    for fun in funs {
+        sym_table.add(
+            fun.name.0.as_str(),
+            SymbolEntry::<E> {
+                info: SymbolEntry::<E>::info(SEBind::Global, SEType::NoType),
+                shndx: U16::new(2),
+                value: fun.entry.into(),
+                size: fun.size.into(),
+                ..Default::default()
+            },
+        );
+    }
 
     let fun_rel: Vec<_> = rel_info
         .funs

@@ -1,7 +1,7 @@
 use std::{mem::swap, rc::Rc};
 
 use crate::{
-    parser::{Block, Expression, Instruction},
+    parser::{Block, Expression, Instruction, Function},
     tokenizer::Operation,
 };
 
@@ -53,17 +53,22 @@ pub fn optimize_expr(expr: &mut Expression) -> Option<Expression> {
 
             None
         }
-        Expression::Index { expr, index } => {
+        Expression::Index { base: expr, index } => {
             optimize_expr_and_replace(expr);
             optimize_expr_and_replace(index);
             None
         }
-        Expression::Function { name: _, args } => {
+        Expression::FunctionCall { name: _, args } => {
             for arg in args.iter_mut() {
                 optimize_expr_and_replace(arg);
             }
             None
         }
+        Expression::Deref(expr) => {
+            optimize_expr_and_replace(expr);
+            None
+        },
+        
     }
 }
 
@@ -76,23 +81,31 @@ pub fn optimize_instruction(instruction: &mut Instruction) {
             optimize_expr_and_replace(expr);
         }
         Instruction::Loop(block) => {
-            optimize(Rc::get_mut(block).unwrap());
+            optimize_block(Rc::get_mut(block).unwrap());
         }
         Instruction::While { expr, block } => {
             optimize_expr_and_replace(expr);
-            optimize(Rc::get_mut(block).unwrap());
+            optimize_block(Rc::get_mut(block).unwrap());
         }
-        Instruction::Block(block) => optimize(Rc::get_mut(block).unwrap()),
+        Instruction::Block(block) => optimize_block(Rc::get_mut(block).unwrap()),
         Instruction::If { expr, block } => {
             optimize_expr_and_replace(expr);
-            optimize(Rc::get_mut(block).unwrap());
+            optimize_block(Rc::get_mut(block).unwrap());
         },
         
     }
 }
 
-pub fn optimize(block: &mut Block) {
-    for instuction in block.instructions.iter_mut() {
-        optimize_instruction(Rc::get_mut(instuction).unwrap());
+pub fn optimize_block(block: &mut Block) {
+    for instruction in block.instructions.iter_mut() {
+        optimize_instruction(Rc::get_mut(instruction).unwrap());
+    
     }
 }
+
+pub fn optimize(functions: &mut [Function]) {
+    for function in functions.iter_mut() {
+        optimize_block(Rc::get_mut(&mut function.block).unwrap());
+    }
+}
+

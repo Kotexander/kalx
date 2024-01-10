@@ -1,30 +1,10 @@
-{
-    // extern printf(str, ...);
+// extern printf(str, ...);
 
-    var hello = "Hello world!";
-    var bye = "Goodbye world!\n";
-    printf("%s\n", hello);
-    printf(bye);
-
+fun test(void) -> void {
     var a = 3;
     var b = 5;
     var c = a+b;
-    var abc = a*c + b * c;
-
-    // var cdecl = "c = %u\n";
-    // printf(cdecl, c);
-
-    // printf("\n\nFibonacci FOREVER:\n");
-    // var fi = 0;
-    // var fa = 0;
-    // var fb = 1;
-    // loop { 
-    //     printf("%+2u: %u\n", fi+1, fa);
-    //     var ft = fa + fb;
-    //     fa = fb;
-    //     fb = ft;
-    //     fi = fi + 1;
-    // }
+    var abc = a * c + b * c;
 
     printf("abc = %u\n", abc);
     if abc < 10 {
@@ -47,19 +27,6 @@
         i = i + 1;
     }
 
-    // Fibonacci
-    printf("\n\nFibonacci:\n");
-    var fa = 0;
-    var fb = 1;
-    var fi = 0;
-    while fi < 48 { // 48 iterations before fa and fb overflow 
-        printf("%+2u: %u\n", fi+1, fa);
-        var ft = fa + fb;
-        fa = fb;
-        fb = ft;
-        fi = fi + 1;
-    }
-
     var w = (((50 + 20) * (100 - 30)) + (500 - (25 * 2)) - (80 - 40));
     printf("w = %u\n", w);
     var x = 10;
@@ -67,5 +34,53 @@
     var z = x * ((y + 1) * 5) * y;
     var zdecl = "z = %u\n";
     printf(zdecl, z);
-    // exit(0);
+    // // exit(0);
+
+    // return 0;
+}
+
+fun main(argc: u32, argv: [#str]) -> u8 {
+    printf("num args: %u\n", argc);
+    // printf("first arg: %s\n", @argv);
+
+    var hello = "Hello world!";
+    var bye = "Goodbye world!\n";
+    printf("%s\n", hello);
+    printf(bye);
+
+    test();
+
+    // var ptr = #abc;
+    // var abc2 = @ptr;
+    // var cdecl = "c = %u\n";
+    // printf(cdecl, c);
+
+    // test("test num: %u\n", 42);
+    fibonacci(48);
+}
+
+fun fibonacci(i: u32) {
+    // Fibonacci
+    printf("\n\nFibonacci:\n");
+    var fa = 0;
+    var fb = 1;
+    var fi = 0;
+    while fi < i { 
+        printf("%+2u: %u\n", fi+1, fa);
+        var ft = fa + fb;
+        fa = fb;
+        fb = ft;
+        fi = fi + 1;
+    }
+    // printf("\n\nFibonacci FOREVER:\n");
+    // var fi = 0;
+    // var fa = 0;
+    // var fb = 1;
+    // loop { 
+    //     printf("%+2u: %u\n", fi+1, fa);
+    //     var ft = fa + fb;
+    //     fa = fb;
+    //     fb = ft;
+    //     fi = fi + 1;
+    // }
 }

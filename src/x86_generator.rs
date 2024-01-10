@@ -2,15 +2,15 @@ use std::{ffi::CString, rc::Rc, vec};
 
 use crate::{
     elf::Endian,
-    ir::{Block, Instruction, Label, Value},
+    ir::{Block, Function, Instruction, Label, Value},
     parser::DeclaredVars,
     tokenizer::{BoolOperation, Id, Operation},
     x86_program::{Program, Reg32, RM32},
 };
 
 type RelStr = (Rc<CString>, Vec<u32>);
-pub struct Strings(pub Vec<RelStr>);
-impl Strings {
+pub struct RelStrings(pub Vec<RelStr>);
+impl RelStrings {
     pub fn new() -> Self {
         Self(vec![])
     }
@@ -36,8 +36,8 @@ impl Strings {
 }
 
 pub type RelFun = (Id, Vec<u32>);
-pub struct Functions(pub Vec<RelFun>);
-impl Functions {
+pub struct RelFunctions(pub Vec<RelFun>);
+impl RelFunctions {
     pub fn new() -> Self {
         Self(vec![])
     }
@@ -62,44 +62,44 @@ impl Functions {
     }
 }
 pub struct RelInfo {
-    pub strs: Strings,
-    pub funs: Functions,
+    pub strs: RelStrings,
+    pub funs: RelFunctions,
 }
 impl RelInfo {
     pub fn new() -> Self {
         Self {
-            strs: Strings::new(),
-            funs: Functions::new(),
+            strs: RelStrings::new(),
+            funs: RelFunctions::new(),
         }
     }
     // pub fn clear(&mut self) {
     //     self.strs.0.clear();
     //     self.funs.0.clear();
     // }
-    // pub fn merge(&mut self, other: Self) {
-    //     for (string, rels) in other.strs.0 {
-    //         for rel in rels {
-    //             self.strs.add_rel(&string, rel)
-    //         }
-    //     }
-    //     for (name, rels) in other.funs.0 {
-    //         for rel in rels {
-    //             self.funs.add_rel(&name, rel)
-    //         }
-    //     }
-    // }
-    // pub fn add_offset(&mut self, offset: u32) {
-    //     for (_, rels) in self.strs.0.iter_mut() {
-    //         for rel in rels {
-    //             *rel += offset;
-    //         }
-    //     }
-    //     for (_, rels) in self.funs.0.iter_mut() {
-    //         for rel in rels {
-    //             *rel += offset;
-    //         }
-    //     }
-    // }
+    pub fn merge(&mut self, other: Self) {
+        for (string, rels) in other.strs.0 {
+            for rel in rels {
+                self.strs.add_rel(&string, rel)
+            }
+        }
+        for (name, rels) in other.funs.0 {
+            for rel in rels {
+                self.funs.add_rel(&name, rel)
+            }
+        }
+    }
+    pub fn add_offset(&mut self, offset: u32) {
+        for (_, rels) in self.strs.0.iter_mut() {
+            for rel in rels {
+                *rel += offset;
+            }
+        }
+        for (_, rels) in self.funs.0.iter_mut() {
+            for rel in rels {
+                *rel += offset;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -289,7 +289,7 @@ fn calc_temp_code(code: &Block, temps: &mut TempMap) {
                 calc_temp_value(rhs, temps);
                 calc_temp_value(target, temps);
             }
-            Instruction::Function { name: _, args } => {
+            Instruction::FunctionCall { name: _, args } => {
                 for arg in args.iter() {
                     calc_temp_value(arg, temps);
                 }
@@ -334,6 +334,8 @@ impl Term {
             }
             Value::Num(num) => Self::Imm(*num),
             Value::String(_) => todo!(),
+            Value::Deref(_) => todo!(),
+            Value::Index { base:_, index:_ } => todo!(),
         }
     }
 }
@@ -513,177 +515,6 @@ fn cmp<E: Endian>(program: &mut Program<E>, lhs: Term, rhs: Term) {
     }
 }
 
-pub fn generate<E: Endian>(code: &Block) -> (Program<E>, RelInfo) {
-    let mut program = Program::<E>::new();
-    let vars = &Vars::new();
-    let temps = calc_temp(code);
-    let mut label_info = LabelInfo::new();
-    let mut rel_info = RelInfo::new();
-
-    let alloc = analyse_alloc(code);
-    // program.push_r(Reg32::EBX);
-    // program.push_r(Reg32::ESI);
-    // program.push_r(Reg32::EDI);
-    program.push_r(Reg32::EBP);
-    program.mov_rm_r(RM32::EBP, Reg32::ESP);
-    program.sub_esp_imm8(alloc.try_into().unwrap());
-    generate_block(
-        &mut program,
-        code,
-        0,
-        vars,
-        &temps,
-        &mut rel_info,
-        &mut label_info,
-    );
-
-    for (label, rels) in label_info.reloc.iter() {
-        let label_addr = label_info.get(label).unwrap();
-        for (location, typ) in rels.iter() {
-            match typ {
-                LabelRelocType::Rel8(addr) => {
-                    let rel: i8 = (label_addr as i32 - *addr as i32).try_into().unwrap();
-                    program.replace_u8(*location, rel as u8);
-                }
-            }
-        }
-    }
-
-    program.mov_r_imm32(Reg32::EAX, 0);
-    // program.pull_r(Reg32::EBX);
-    // program.pull_r(Reg32::ESI);
-    // program.pull_r(Reg32::EDI);
-    
-    program.mov_rm_r(RM32::SIB, Reg32::EBP);
-    program.pop_r(Reg32::EBP);
-    // program.leave();
-    program.ret();
-    (program, rel_info)
-}
-
-fn generate_block<E: Endian>(
-    program: &mut Program<E>,
-    code: &Block,
-    alloc_end: i32,
-    vars: &Vars,
-    temps: &TempMap,
-    rel_info: &mut RelInfo,
-    label_info: &mut LabelInfo,
-) {
-    for instruction in code.0.iter() {
-        generate_instruction(
-            program,
-            instruction,
-            alloc_end,
-            vars,
-            temps,
-            rel_info,
-            label_info,
-        );
-    }
-}
-
-// fn generate_block<'a, E: Endian>(
-//     program: &mut Program<E>,
-//     code: &mut impl Iterator<Item = &'a Instruction>,
-//     alloc_end: i32,
-//     vars: &Vars,
-//     temps: &TempMap,
-//     rel_info: &mut RelInfo,
-//     label_info: &mut LabelInfo,
-//     looking_for: Option<Label>,
-// ) {
-//     while let Some(instruction) = code.next() {
-//         match instruction {
-//             Instruction::Goto(l) => {
-//                 if let Some(label_addr) = label_info.get(l) {
-//                     let rel_byte = program.jmp_rel(0);
-//                     let jmp_addr = program.addr();
-//                     let rel: i8 = (label_addr as i32 - jmp_addr as i32).try_into().unwrap();
-//                     program.replace_u8(rel_byte, rel as u8);
-//                 } else {
-//                     let mut temp_p = Program::<E>::new();
-//                     let mut temp_r = RelInfo::new();
-//                     let mut temp_l = LabelInfo::new();
-//                     generate_block(
-//                         &mut temp_p,
-//                         code,
-//                         alloc_end,
-//                         vars,
-//                         temps,
-//                         &mut temp_r,
-//                         &mut temp_l,
-//                         Some(*l),
-//                     );
-
-//                     let label_addr = temp_l.get(l).unwrap();
-//                     let rel_byte = program.jmp_rel(0);
-//                     // let jmp_addr = program.addr();
-//                     let rel: i8 = (label_addr as i32).try_into().unwrap();
-//                     program.replace_u8(rel_byte, rel as u8);
-
-//                     let offset = program.addr();
-//                     temp_r.add_offset(offset);
-//                     temp_l.add_offset(offset);
-//                     rel_info.merge(temp_r);
-//                     label_info.merge(temp_l);
-//                     program.code.extend_from_slice(&temp_p.code);
-//                 }
-//             }
-//             Instruction::IfElseGoto {
-//                 lhs,
-//                 op,
-//                 rhs,
-//                 good,
-//                 bad,
-//             } => {
-//                 cmp(
-//                     program,
-//                     Term::from_value(lhs, vars, temps),
-//                     Term::from_value(rhs, vars, temps),
-//                 );
-//                 if let Some(good_addr) = label_info.get(good) {
-//                     let rel_byte = match op {
-//                         BoolOperation::GTC => program.jg(0),
-//                         BoolOperation::LTC => program.jl(0),
-//                         BoolOperation::GTE => program.jge(0),
-//                         BoolOperation::LTE => program.jle(0),
-//                         _ => todo!(),
-//                     };
-//                     let jmp_addr = program.addr();
-//                     let rel: i8 = (good_addr as i32 - jmp_addr as i32).try_into().unwrap();
-//                     program.replace_u8(rel_byte, rel as u8);
-//                 }
-//                 else {
-//                     panic!()
-//                 }
-//                 if let Some(_bad) = bad {
-//                     panic!()
-//                 }
-//                 // else {
-//                 //     panic!()
-//                 // }
-//             }
-//             _ => {
-//                 generate_instruction(
-//                     program,
-//                     instruction,
-//                     alloc_end,
-//                     vars,
-//                     temps,
-//                     rel_info,
-//                     label_info,
-//                 );
-//             }
-//         }
-//         if let Some(label) = looking_for {
-//             if label_info.get(&label).is_some() {
-//                 return;
-//             }
-//         }
-//     }
-// }
-
 fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
     instruction: &Instruction,
@@ -730,7 +561,7 @@ fn generate_instruction<E: Endian>(
                 Term::from_value(rhs, vars, temps),
             );
         }
-        Instruction::Function { name, args } => {
+        Instruction::FunctionCall { name, args } => {
             match name.0.as_str() {
                 "exit" => {
                     match &args[0] {
@@ -747,6 +578,8 @@ fn generate_instruction<E: Endian>(
                             program.mov_r_imm32(Reg32::EBX, *num);
                         }
                         Value::String(_) => todo!(),
+                        Value::Deref(_) => todo!(),
+                        Value::Index { base:_, index:_ } => todo!(),
                     }
                     program.exit();
                 }
@@ -770,6 +603,8 @@ fn generate_instruction<E: Endian>(
                                 let rel = program.push_imm32(0);
                                 rel_info.strs.add_rel(string, rel);
                             }
+                            Value::Deref(_) => todo!(),
+                            Value::Index { base:_, index:_ } => todo!(),
                         }
                         stack += 4;
                     }
@@ -783,7 +618,7 @@ fn generate_instruction<E: Endian>(
             let mut new_alloc_end = alloc_end;
             let mut new_vars = Vars::alloc_vars(decl_vars, &mut new_alloc_end);
             new_vars.add(vars);
-            generate_block(
+            generate_code(
                 program,
                 code,
                 new_alloc_end,
@@ -821,17 +656,108 @@ fn generate_instruction<E: Endian>(
             };
             let jmp_reloc = program.addr();
             label_info.add_rel(good, location, LabelRelocType::Rel8(jmp_reloc));
-
-            // if let Some(bad) = bad {
-            //     let location = program.jmp_rel8(0);
-            //     let reloc = program.addr();
-            //     label_info.add_rel(bad, location, LabelRelocType::Rel8(reloc));
-            // }
         }
     }
 }
 
-fn analyse_alloc(code: &Block) -> u32 {
+fn generate_code<E: Endian>(
+    program: &mut Program<E>,
+    code: &Block,
+    alloc_end: i32,
+    vars: &Vars,
+    temps: &TempMap,
+    rel_info: &mut RelInfo,
+    label_info: &mut LabelInfo,
+) {
+    for instruction in code.0.iter() {
+        generate_instruction(
+            program,
+            instruction,
+            alloc_end,
+            vars,
+            temps,
+            rel_info,
+            label_info,
+        );
+    }
+}
+pub struct FunDecl {
+    pub name: Id,
+    pub entry: u32,
+    pub size: u32,
+}
+pub fn generate<E: Endian>(functions: &[Function]) -> (Program<E>, RelInfo, Vec<FunDecl>) {
+    let mut program = Program::<E>::new();
+    let mut rel_info = RelInfo::new();
+    let mut funs = vec![];
+
+    for function in functions {
+        let mut p = Program::<E>::new();
+        let mut vars = Vars::new();
+        let mut disp = 4; // 4 for ebp and 4 for ret addr
+        for (id, typ) in function.args.iter() {
+            disp += typ.size() as i32;
+            vars.0.push((id.clone(), disp));
+        }
+
+        let temps = calc_temp(&function.block);
+        let mut label_info = LabelInfo::new();
+        let mut r_info = RelInfo::new();
+
+        let alloc = calc_alloc(&function.block);
+        // program.push_r(Reg32::EBX);
+        // program.push_r(Reg32::ESI);
+        // program.push_r(Reg32::EDI);
+        p.push_r(Reg32::EBP);
+        p.mov_rm_r(RM32::EBP, Reg32::ESP);
+        p.sub_esp_imm8(alloc.try_into().unwrap());
+        generate_code(
+            &mut p,
+            &function.block,
+            0,
+            &vars,
+            &temps,
+            &mut r_info,
+            &mut label_info,
+        );
+
+        for (label, rels) in label_info.reloc.iter() {
+            let label_addr = label_info.get(label).unwrap();
+            for (location, typ) in rels.iter() {
+                match typ {
+                    LabelRelocType::Rel8(addr) => {
+                        let rel: i8 = (label_addr as i32 - *addr as i32).try_into().unwrap();
+                        p.replace_u8(*location, rel as u8);
+                    }
+                }
+            }
+        }
+
+        p.mov_r_imm32(Reg32::EAX, 0);
+        // program.pull_r(Reg32::EBX);
+        // program.pull_r(Reg32::ESI);
+        // program.pull_r(Reg32::EDI);
+
+        p.mov_rm_r(RM32::SIB, Reg32::EBP);
+        p.pop_r(Reg32::EBP);
+        // program.leave();
+        p.ret();
+
+        let entry = program.addr();
+        funs.push(FunDecl {
+            name: function.name.clone(),
+            entry: program.addr(),
+            size: p.addr(),
+        });
+
+        r_info.add_offset(entry);
+        rel_info.merge(r_info);
+        program.code.extend_from_slice(&p.code);
+    }
+    (program, rel_info, funs)
+}
+
+fn calc_alloc(code: &Block) -> u32 {
     let mut alloc = 0;
     for instruction in code.0.iter() {
         if let Instruction::Block {
@@ -844,7 +770,7 @@ fn analyse_alloc(code: &Block) -> u32 {
                 block_alloc += typ.size();
             }
 
-            block_alloc += analyse_alloc(code);
+            block_alloc += calc_alloc(code);
 
             alloc = alloc.max(block_alloc);
         }
