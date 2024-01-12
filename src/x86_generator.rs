@@ -5,7 +5,7 @@ use crate::{
     ir::{Block, Function, Instruction, Label, Value},
     parser::DeclaredVars,
     tokenizer::{BoolOperation, Id, Operation},
-    x86_program::{Program, Reg32, RM32},
+    x86_program::{Program, Reg32, SIBIndex, RM32, SIBSS},
 };
 
 type RelStr = (Rc<CString>, Vec<u32>);
@@ -218,76 +218,120 @@ impl Into<Reg32> for Register {
         }
     }
 }
+#[allow(clippy::from_over_into)]
+impl Into<SIBIndex> for Register {
+    fn into(self) -> SIBIndex {
+        match self {
+            Register::EAX => SIBIndex::EAX,
+            Register::ECX => SIBIndex::ECX,
+            Register::EDX => SIBIndex::EDX,
+            Register::EBX => SIBIndex::EBX,
+            Register::ESI => SIBIndex::ESI,
+            Register::EDI => SIBIndex::EDI,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+enum TempInfo {
+    Num(u32),
+    /// * Assign memory to memory
+    /// * EAX
+    Reg1,
+    /// * when div/mod and indexing
+    /// * EAX and EDX
+    Reg2,
+}
+#[derive(Debug, Clone)]
+struct TempMatching {
+    ranks: Vec<Vec<TempInfo>>,
+}
+impl TempMatching {
+    fn new() -> Self {
+        Self {
+            ranks: vec![vec![]],
+        }
+    }
+    fn push_all(&mut self, t: TempInfo) {
+        for rank in self.ranks.iter_mut() {
+            rank.push(t);
+        }
+    }
+}
 
+#[derive(Debug, Clone)]
 struct TempMap(Vec<Vec<u32>>);
 impl TempMap {
     fn new() -> Self {
-        Self(vec![])
+        Self(vec![vec![]; 6])
     }
     fn get(&self, t: &u32) -> Register {
         match self.0.iter().position(|rank| rank.contains(t)).unwrap() {
-            0 => Register::ECX,
+            0 => Register::EAX,
             1 => Register::EDX,
-            2 => Register::EBX,
-            3 => Register::ESI,
-            4 => Register::EDI,
+            2 => Register::ECX,
+            3 => Register::EBX,
+            4 => Register::ESI,
+            5 => Register::EDI,
             _ => todo!(),
         }
     }
 }
 
-fn calc_temp_value(value: &Value, temps: &mut TempMap) {
-    if let Value::Temp(t) = value {
-        let mut found = None;
-        let mut promoted_temps = vec![];
-
-        for (rank, rank_temps) in temps.0.iter_mut().enumerate() {
-            if let Some(i) = rank_temps.iter().position(|tt| *tt == *t) {
-                let i = i + 1;
-                promoted_temps = rank_temps[i..].to_vec();
-                rank_temps.truncate(i);
-                found = Some(rank);
-                break;
+fn calc_temp(code: &Block) -> TempMap {
+    let mut temps = TempMap::new();
+    let mut temp_matching = TempMatching::new();
+    calc_temp_code(code, &mut temp_matching);
+    dbg!(&temp_matching);
+    for (rank, temp_info) in temp_matching.ranks.into_iter().enumerate() {
+        let mut nums = vec![];
+        for temp in temp_info.iter() {
+            match temp {
+                TempInfo::Num(n) => {
+                    nums.push(*n);
+                }
+                TempInfo::Reg1 => {
+                    temps.0[rank + 1].extend_from_slice(&nums);
+                    nums.clear()
+                }
+                TempInfo::Reg2 => {
+                    temps.0[rank + 2].extend_from_slice(&nums);
+                    nums.clear()
+                }
             }
         }
-        match found {
-            Some(rank) => match temps.0.get_mut(rank + 1) {
-                Some(rank) => {
-                    rank.extend_from_slice(&promoted_temps);
-                }
-                None => {
-                    if !promoted_temps.is_empty() {
-                        temps.0.push(promoted_temps);
-                    }
-                }
-            },
-            None => match temps.0.first_mut() {
-                Some(temps) => {
-                    temps.push(*t);
-                }
-                None => {
-                    temps.0.push(vec![*t]);
-                }
-            },
-        }
+        temps.0[rank].extend_from_slice(&nums);
     }
+    dbg!(&temps);
+    temps
 }
-fn calc_temp_code(code: &Block, temps: &mut TempMap) {
+fn calc_temp_code(code: &Block, temps: &mut TempMatching) {
     for instruction in code.0.iter() {
         match instruction {
             Instruction::Assign { target, value } => {
                 calc_temp_value(value, temps);
                 calc_temp_value(target, temps);
+                match (target, value) {
+                    (Value::Id(_), Value::Id(_)) => {
+                        temps.push_all(TempInfo::Reg1);
+                    }
+                    (_, Value::Index { .. }) | (Value::Index { .. }, _) => {
+                        temps.push_all(TempInfo::Reg2);
+                    }
+                    _ => {}
+                }
             }
             Instruction::Op {
                 target,
                 lhs,
-                op: _,
+                op,
                 rhs,
             } => {
                 calc_temp_value(lhs, temps);
                 calc_temp_value(rhs, temps);
                 calc_temp_value(target, temps);
+                if matches!(op, Operation::Div) {
+                    temps.push_all(TempInfo::Reg2);
+                }
             }
             Instruction::FunctionCall { name: _, args } => {
                 for arg in args.iter() {
@@ -306,15 +350,136 @@ fn calc_temp_code(code: &Block, temps: &mut TempMap) {
         }
     }
 }
-fn calc_temp(code: &Block) -> TempMap {
-    let mut temps = TempMap::new();
-    calc_temp_code(code, &mut temps);
-    temps
-}
+fn calc_temp_value(value: &Value, temps: &mut TempMatching) {
+    if let Value::Temp(t) = value {
+        // temps.ranks[0].push(TempInfo::Num(*t));
+        let mut found = None;
+        let mut promoted_temps = vec![];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        for (rank, rank_temps) in temps.ranks.iter_mut().enumerate() {
+            if let Some(i) = rank_temps.iter().position(|t2| {
+                if let TempInfo::Num(t2) = t2 {
+                    *t2 == *t
+                } else {
+                    false
+                }
+            }) {
+                let i = i + 1;
+                promoted_temps = rank_temps[i..].to_vec();
+                rank_temps.truncate(i);
+                found = Some(rank);
+                break;
+            }
+        }
+        match found {
+            Some(rank) => match temps.ranks.get_mut(rank + 1) {
+                Some(rank) => {
+                    rank.extend_from_slice(&promoted_temps);
+                }
+                None => {
+                    if !promoted_temps.is_empty() {
+                        temps.ranks.push(promoted_temps);
+                    }
+                }
+            },
+            None => {
+                temps.ranks[0].push(TempInfo::Num(*t));
+            }
+        }
+    }
+}
+// fn calc_temp_value(value: &Value, temps: &mut TempMatching) {
+//     if let Value::Temp(t) = value {
+//         let mut found = None;
+//         let mut promoted_temps = vec![];
+
+//         for (rank, rank_temps) in temps.matches.iter_mut().enumerate() {
+//             if let Some(i) = rank_temps.nums.iter().position(|tt| *tt == *t) {
+//                 let i = i + 1;
+//                 promoted_temps = rank_temps.nums[i..].to_vec();
+//                 rank_temps.nums.truncate(i);
+//                 found = Some(rank);
+//                 break;
+//             }
+//         }
+//         match found {
+//             Some(rank) => match temps.matches.get_mut(rank + 1) {
+//                 Some(rank) => {
+//                     rank.nums.extend_from_slice(&promoted_temps);
+//                 }
+//                 None => {
+//                     if !promoted_temps.is_empty() {
+//                         temps.matches.push(promoted_temps);
+//                     }
+//                 }
+//             },
+//             None => match temps.matches.first_mut() {
+//                 Some(temps) => {
+//                     temps.push(*t);
+//                 }
+//                 None => {
+//                     temps.matches.push(vec![*t]);
+//                 }
+//             },
+//         }
+//     }
+// }
+// fn calc_temp_code(code: &Block, temps: &mut TempMap) {
+//     for instruction in code.0.iter() {
+//         match instruction {
+//             Instruction::Assign { target, value } => {
+//                 calc_temp_value(value, temps);
+//                 calc_temp_value(target, temps);
+//             }
+//             Instruction::Op {
+//                 target,
+//                 lhs,
+//                 op: _,
+//                 rhs,
+//             } => {
+//                 calc_temp_value(lhs, temps);
+//                 calc_temp_value(rhs, temps);
+//                 calc_temp_value(target, temps);
+//             }
+//             Instruction::FunctionCall { name: _, args } => {
+//                 for arg in args.iter() {
+//                     calc_temp_value(arg, temps);
+//                 }
+//             }
+//             Instruction::Block { decl_vars: _, code } => {
+//                 calc_temp_code(code, temps);
+//             }
+//             Instruction::Label(_) => {}
+//             Instruction::Goto(_) => {}
+//             Instruction::IfGoto { lhs, rhs, .. } => {
+//                 calc_temp_value(lhs, temps);
+//                 calc_temp_value(rhs, temps);
+//             }
+//         }
+//     }
+// }
+// fn calc_temp(code: &Block) -> TempMap {
+//     let mut temps = TempMap::new();
+//     calc_temp_code(code, &mut temps);
+//     temps
+// }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Imm {
+    Num(u32),
+    String(Rc<CString>),
+}
+impl Imm {
+    fn num(self) -> u32 {
+        match self {
+            Imm::Num(n) => n,
+            Imm::String(_) => panic!(),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Term {
-    Imm(u32),
+    Imm(Imm),
     Reg(Register),
     Stack(i32),
 }
@@ -322,31 +487,36 @@ impl Term {
     fn is_location(&self) -> bool {
         matches!(self, Self::Reg(_) | Self::Stack(_))
     }
-    fn from_value(value: &Value, vars: &Vars, temps: &TempMap) -> Self {
+    fn from_value(value: Value, vars: &Vars, temps: &TempMap) -> Self {
         match value {
             Value::Id(id) => {
-                let disp = vars.get(id).unwrap();
+                let disp = vars.get(&id).unwrap();
                 Self::Stack(disp)
             }
             Value::Temp(t) => {
-                let reg = temps.get(t);
+                let reg = temps.get(&t);
                 Self::Reg(reg)
             }
-            Value::Num(num) => Self::Imm(*num),
-            Value::String(_) => todo!(),
+            Value::Num(num) => Self::Imm(Imm::Num(num)),
+            Value::String(string) => Self::Imm(Imm::String(string)),
             Value::Deref(_) => todo!(),
-            Value::Index { base:_, index:_ } => todo!(),
+            Value::Index {
+                base: _,
+                index: _,
+                size: _,
+            } => todo!(),
         }
     }
 }
 
-fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: &Operation, rhs: Term) {
+fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: Operation, rhs: Term) {
     match target {
         Term::Reg(reg) => {
             match op {
                 Operation::Add => {
                     match rhs {
                         Term::Imm(num) => {
+                            let num = num.num();
                             if let Register::EAX = reg {
                                 program.add_eax_imm32(num);
                             } else {
@@ -365,6 +535,7 @@ fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: &Operation, rhs
                 Operation::Sub => {
                     match rhs {
                         Term::Imm(num) => {
+                            let num = num.num();
                             if let Register::EAX = reg {
                                 program.sub_eax_imm32(num);
                             } else {
@@ -382,6 +553,7 @@ fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: &Operation, rhs
                 }
                 Operation::Mul => match rhs {
                     Term::Imm(num) => {
+                        let num = num.num();
                         program.mul_r_rm_imm32(reg.into(), reg.into(), num);
                     }
                     Term::Reg(r) => {
@@ -391,13 +563,20 @@ fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: &Operation, rhs
                         program.mul_r_rm8(reg.into(), RM32::EBP, disp.try_into().unwrap());
                     }
                 },
-                Operation::Div => todo!(),
+                Operation::Div => {
+                    match rhs {
+                        Term::Imm(_) => todo!(),
+                        Term::Reg(_) => todo!(),
+                        Term::Stack(_) => todo!(),
+                    }
+                },
                 _ => todo!(),
             }
         }
         Term::Stack(disp) => match op {
             Operation::Add => match rhs {
                 Term::Imm(num) => {
+                    let num = num.num();
                     program.add_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), num);
                 }
                 Term::Reg(reg) => {
@@ -410,6 +589,7 @@ fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: &Operation, rhs
             },
             Operation::Sub => match rhs {
                 Term::Imm(num) => {
+                    let num = num.num();
                     program.sub_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), num);
                 }
                 Term::Reg(reg) => {
@@ -422,6 +602,7 @@ fn op_t_t<E: Endian>(program: &mut Program<E>, target: Term, op: &Operation, rhs
             },
             Operation::Mul => match rhs {
                 Term::Imm(num) => {
+                    let num = num.num();
                     program.mul_r_rm8_imm32(Reg32::EAX, RM32::EBP, disp.try_into().unwrap(), num);
                     program.mov_rm8_r(RM32::EBP, Reg32::EAX, disp.try_into().unwrap());
                 }
@@ -446,7 +627,7 @@ fn op_t_t_t<E: Endian>(
     program: &mut Program<E>,
     target: Term,
     lhs: Term,
-    op: &Operation,
+    op: Operation,
     rhs: Term,
 ) {
     if !target.is_location() {
@@ -459,6 +640,7 @@ fn op_t_t_t<E: Endian>(
         match target {
             Term::Reg(reg) => match lhs {
                 Term::Imm(num) => {
+                    let num = num.num();
                     program.mov_r_imm32(reg.into(), num);
                 }
                 Term::Reg(reg2) => {
@@ -471,6 +653,7 @@ fn op_t_t_t<E: Endian>(
             },
             Term::Stack(disp) => match lhs {
                 Term::Imm(num) => {
+                    let num = num.num();
                     program.mov_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), num);
                 }
                 Term::Reg(reg) => {
@@ -496,6 +679,7 @@ fn cmp<E: Endian>(program: &mut Program<E>, lhs: Term, rhs: Term) {
             program.cmp_r_rm8(r.into(), RM32::EBP, disp.try_into().unwrap());
         }
         (Term::Reg(r), Term::Imm(n)) => {
+            let n = n.num();
             program.cmp_rm_imm32(r.into(), n);
         }
         (Term::Reg(r), Term::Reg(r2)) => {
@@ -503,6 +687,7 @@ fn cmp<E: Endian>(program: &mut Program<E>, lhs: Term, rhs: Term) {
             // program.cmp_r_rm(r.into(), r2.into());
         }
         (Term::Stack(disp), Term::Imm(n)) => {
+            let n = n.num();
             program.cmp_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), n);
         }
         (Term::Stack(disp), Term::Reg(r)) => {
@@ -515,9 +700,64 @@ fn cmp<E: Endian>(program: &mut Program<E>, lhs: Term, rhs: Term) {
     }
 }
 
+fn assign<E: Endian>(program: &mut Program<E>, target: Term, value: Term, rel_info: &mut RelInfo) {
+    if target == value {
+        return;
+    }
+    match target {
+        Term::Reg(reg) => {
+            match value {
+                Term::Imm(imm) => {
+                    let num = match imm {
+                        Imm::Num(num) => num,
+                        Imm::String(_) => 0,
+                    };
+                    let rel = program.mov_r_imm32(reg.into(), num);
+                    match imm {
+                        Imm::Num(_) => {}
+                        Imm::String(string) => {
+                            rel_info.strs.add_rel(&string, rel);
+                        }
+                    }
+                }
+                Term::Reg(reg2) => {
+                    program.mov_rm_r(reg.into(), reg2.into());
+                    // program.mov_r_r,(reg.into(), reg2.into());
+                }
+                Term::Stack(disp) => {
+                    program.mov_r_rm8(reg.into(), RM32::EBP, disp.try_into().unwrap());
+                }
+            }
+        }
+        Term::Stack(disp) => match value {
+            Term::Imm(imm) => {
+                let num = match imm {
+                    Imm::Num(num) => num,
+                    Imm::String(_) => 0,
+                };
+                let rel = program.mov_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), num);
+                match imm {
+                    Imm::Num(_) => {}
+                    Imm::String(string) => {
+                        rel_info.strs.add_rel(&string, rel);
+                    }
+                }
+            }
+            Term::Reg(reg) => {
+                program.mov_rm8_r(RM32::EBP, reg.into(), disp.try_into().unwrap());
+            }
+            Term::Stack(disp2) => {
+                program.mov_r_rm8(Reg32::EAX, RM32::EBP, disp2.try_into().unwrap());
+                program.mov_rm8_r(RM32::EBP, Reg32::EAX, disp.try_into().unwrap());
+            }
+        },
+        Term::Imm(_) => panic!("can't assign to an immediate"),
+    }
+}
+
 fn generate_instruction<E: Endian>(
     program: &mut Program<E>,
-    instruction: &Instruction,
+    instruction: Instruction,
     alloc_end: i32,
     vars: &Vars,
     temps: &TempMap,
@@ -525,27 +765,77 @@ fn generate_instruction<E: Endian>(
     label_info: &mut LabelInfo,
 ) {
     match instruction {
-        Instruction::Assign { target, value } => match target {
-            Value::Id(id) => {
-                let disp = vars.get(id).unwrap();
-                match value {
-                    Value::Id(value_id) => {
-                        let disp2 = vars.get(value_id).unwrap();
-                        program.mov_r_rm8(Reg32::EAX, RM32::EBP, disp2.try_into().unwrap());
-                        program.mov_rm8_r(RM32::EBP, Reg32::EAX, disp.try_into().unwrap());
+        Instruction::Assign { target, value } => {
+            let target = Term::from_value(target, vars, temps);
+            match value {
+                Value::Deref(_) => todo!(),
+                Value::Index { base, index, size } => {
+                    let base = Term::from_value(*base, vars, temps);
+                    let index = Term::from_value(*index, vars, temps);
+                    let scale = match size {
+                        1 => SIBSS::S1,
+                        2 => SIBSS::S2,
+                        4 => SIBSS::S4,
+                        8 => SIBSS::S8,
+                        _ => panic!(),
+                    };
+                    let idx_reg = match index {
+                        Term::Imm(_) => todo!(),
+                        Term::Reg(r) => r,
+                        Term::Stack(disp) => {
+                            let r = Register::EDX;
+                            program.mov_r_rm8(r.into(), RM32::EBP, disp.try_into().unwrap());
+                            r
+                        }
+                    };
+                    program.lea_r_sib(Reg32::EDX, scale, idx_reg.into());
+                    // op_t_t(program, Term::Reg(Register::EAX), Operation::Mul, Term::Imm(Imm::Num(4)));
+
+                    match base {
+                        Term::Imm(_) => todo!(),
+                        Term::Reg(_) => todo!(),
+                        Term::Stack(disp) => {
+                            program.mov_r_rm8(Reg32::EAX, RM32::EBP, disp.try_into().unwrap());
+                        }
                     }
-                    Value::Num(num) => {
-                        program.mov_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), *num);
-                    }
-                    Value::String(string) => {
-                        let rel = program.mov_rm8_imm32(RM32::EBP, disp.try_into().unwrap(), 0);
-                        rel_info.strs.add_rel(string, rel);
-                    }
-                    _ => panic!("can't load {value} in `{instruction}`"),
+
+                    op_t_t(
+                        program,
+                        Term::Reg(Register::EAX),
+                        Operation::Add,
+                        Term::Reg(Register::EDX),
+                    );
+                    program.mov_r_rm0(Reg32::EAX, RM32::EAX);
+
+                    // match index {
+                    //     Term::Imm(_) => todo!(),
+                    //     Term::Reg(_) => todo!(),
+                    //     Term::Stack(disp) => {
+                    //         program.mov_r_rm8(Reg32::EAX, RM32::EBP, disp.try_into().unwrap());
+                    //         // op_t_t(program, Term::Reg(Register::EAX), Operation::Mul, Term::Imm(Imm::Num(4)));
+                    //         // program.lea_r_sib(Reg32::EAX, SIBSS::S4, SIBIndex::EAX);
+
+                    //     },
+                    // }
+                    // match base {
+                    //     Term::Imm(_) => todo!(),
+                    //     Term::Reg(_) => todo!(),
+                    //     Term::Stack(disp) => {
+                    //         // program.mov_r_rm8(Reg32::ECX, RM32::EBP, disp.try_into().unwrap());
+                    //         program.mov_r_sib8_4(Reg32::EAX, SIBReg::EBP, SIBIndex::EAX, disp.try_into().unwrap());
+                    //     },
+                    // }
+
+                    assign(program, target, Term::Reg(Register::EAX), rel_info);
                 }
+                _ => assign(
+                    program,
+                    target,
+                    Term::from_value(value, vars, temps),
+                    rel_info,
+                ),
             }
-            _ => panic!("can't assigning {target} in `{instruction}`"),
-        },
+        }
         Instruction::Op {
             target,
             lhs,
@@ -579,7 +869,11 @@ fn generate_instruction<E: Endian>(
                         }
                         Value::String(_) => todo!(),
                         Value::Deref(_) => todo!(),
-                        Value::Index { base:_, index:_ } => todo!(),
+                        Value::Index {
+                            base: _,
+                            index: _,
+                            size: _,
+                        } => todo!(),
                     }
                     program.exit();
                 }
@@ -603,20 +897,51 @@ fn generate_instruction<E: Endian>(
                                 let rel = program.push_imm32(0);
                                 rel_info.strs.add_rel(string, rel);
                             }
-                            Value::Deref(_) => todo!(),
-                            Value::Index { base:_, index:_ } => todo!(),
+                            Value::Deref(val) => {
+                                let val = Term::from_value((**val).clone(), vars, temps);
+                                match val {
+                                    Term::Imm(_) => todo!(),
+                                    Term::Reg(r) => {
+                                        program.push_rm0(r.into());
+                                    }
+                                    Term::Stack(disp) => {
+                                        program.mov_r_rm8(
+                                            Reg32::EAX,
+                                            RM32::EBP,
+                                            disp.try_into().unwrap(),
+                                        );
+                                        program.push_rm0(RM32::EAX);
+                                    }
+                                }
+                                // match &**val {
+                                //     Value::Id(id) => {
+                                //     }
+                                //     Value::Temp() => {
+
+                                //     },
+                                //     Value::Num(_) => todo!(),
+                                //     Value::String(_) => todo!(),
+                                //     Value::Index { base:_, index:_, size:_ } => todo!(),
+                                //     Value::Deref(_) => panic!(),
+                                // }
+                            }
+                            Value::Index {
+                                base: _,
+                                index: _,
+                                size: _,
+                            } => todo!(),
                         }
                         stack += 4;
                     }
                     let rel = program.call_rel32(-4);
-                    rel_info.funs.add_rel(name, rel);
+                    rel_info.funs.add_rel(&name, rel);
                     program.add_esp_imm8(stack);
                 }
             }
         }
         Instruction::Block { decl_vars, code } => {
             let mut new_alloc_end = alloc_end;
-            let mut new_vars = Vars::alloc_vars(decl_vars, &mut new_alloc_end);
+            let mut new_vars = Vars::alloc_vars(&decl_vars, &mut new_alloc_end);
             new_vars.add(vars);
             generate_code(
                 program,
@@ -629,12 +954,12 @@ fn generate_instruction<E: Endian>(
             );
         }
         Instruction::Label(l) => {
-            label_info.add_label(*l, program.addr());
+            label_info.add_label(l, program.addr());
         }
         Instruction::Goto(l) => {
             let location = program.jmp_rel8(0);
             let reloc = program.addr();
-            label_info.add_rel(l, location, LabelRelocType::Rel8(reloc));
+            label_info.add_rel(&l, location, LabelRelocType::Rel8(reloc));
         }
         Instruction::IfGoto {
             lhs,
@@ -655,21 +980,21 @@ fn generate_instruction<E: Endian>(
                 _ => todo!(),
             };
             let jmp_reloc = program.addr();
-            label_info.add_rel(good, location, LabelRelocType::Rel8(jmp_reloc));
+            label_info.add_rel(&good, location, LabelRelocType::Rel8(jmp_reloc));
         }
     }
 }
 
 fn generate_code<E: Endian>(
     program: &mut Program<E>,
-    code: &Block,
+    code: Block,
     alloc_end: i32,
     vars: &Vars,
     temps: &TempMap,
     rel_info: &mut RelInfo,
     label_info: &mut LabelInfo,
 ) {
-    for instruction in code.0.iter() {
+    for instruction in code.0.into_iter() {
         generate_instruction(
             program,
             instruction,
@@ -686,7 +1011,8 @@ pub struct FunDecl {
     pub entry: u32,
     pub size: u32,
 }
-pub fn generate<E: Endian>(functions: &[Function]) -> (Program<E>, RelInfo, Vec<FunDecl>) {
+
+pub fn generate<E: Endian>(functions: Vec<Function>) -> (Program<E>, RelInfo, Vec<FunDecl>) {
     let mut program = Program::<E>::new();
     let mut rel_info = RelInfo::new();
     let mut funs = vec![];
@@ -701,6 +1027,7 @@ pub fn generate<E: Endian>(functions: &[Function]) -> (Program<E>, RelInfo, Vec<
         }
 
         let temps = calc_temp(&function.block);
+        // let temps = TempMap(vec![]);
         let mut label_info = LabelInfo::new();
         let mut r_info = RelInfo::new();
 
@@ -713,7 +1040,7 @@ pub fn generate<E: Endian>(functions: &[Function]) -> (Program<E>, RelInfo, Vec<
         p.sub_esp_imm8(alloc.try_into().unwrap());
         generate_code(
             &mut p,
-            &function.block,
+            function.block,
             0,
             &vars,
             &temps,

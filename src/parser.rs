@@ -109,6 +109,7 @@ pub enum Expression {
     Index {
         base: Rc<Self>,
         index: Rc<Self>,
+        size: u32
     },
     FunctionCall {
         name: Id,
@@ -151,7 +152,7 @@ impl Display for Expression {
             Expression::String(string) => write!(f, "{string:?}"),
             Expression::Ident(id) => write!(f, "{id}"),
             Expression::Operation { lhs, op, rhs } => write!(f, "({lhs} {op} {rhs})"),
-            Expression::Index { base, index } => write!(f, "{base}[{index}]"),
+            Expression::Index { base, index, size} => write!(f, "{base}[{index}] // size: {size}"),
             Expression::FunctionCall { name, args } => {
                 if !args.is_empty() {
                     let last = args.len() - 1;
@@ -587,6 +588,7 @@ pub fn parse(code: &str) -> Result<Vec<Function>, String> {
                         let node: AST = Rc::new(Expression::Index {
                             base: expr.clone(),
                             index: index.clone(),
+                            size:0,
                         })
                         .into();
                         nodes.reduce(4);

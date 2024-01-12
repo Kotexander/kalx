@@ -53,7 +53,7 @@ pub fn optimize_expr(expr: &mut Expression) -> Option<Expression> {
 
             None
         }
-        Expression::Index { base: expr, index } => {
+        Expression::Index { base: expr, index, size:_ } => {
             optimize_expr_and_replace(expr);
             optimize_expr_and_replace(index);
             None

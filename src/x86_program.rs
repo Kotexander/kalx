@@ -41,9 +41,49 @@ pub enum Reg32 {
     ESI = 0b110,
     EDI = 0b111,
 }
-type ModRM32 = u8;
-pub fn modrm32(m: Mod32, rm: RM32, reg: Reg32) -> ModRM32 {
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum SIBSS {
+    S1 = 0b00,
+    S2 = 0b01,
+    S4 = 0b10,
+    S8 = 0b11,
+}
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum SIBReg {
+    EAX = 0b000,
+    ECX = 0b001,
+    EDX = 0b010,
+    EBX = 0b011,
+    ESP = 0b100,
+    /// * this is `disp32` when RMMod is [Mod32::Disp00]
+    /// * this is `EBP + disp8` when RMMod is [Mod32::Disp08]
+    /// * this is `EBP + disp32` when RMMod is [Mod32::Disp32]
+    EBP = 0b101,
+    ESI = 0b110,
+    EDI = 0b111,
+}
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum SIBIndex {
+    EAX = 0b000,
+    ECX = 0b001,
+    EDX = 0b010,
+    EBX = 0b011,
+    EBP = 0b101,
+    ESI = 0b110,
+    EDI = 0b111,
+}
+
+pub fn modrm32(m: Mod32, rm: RM32, reg: Reg32) -> u8 {
     ((m as u8) << 6) | ((reg as u8) << 3) | (rm as u8)
+}
+pub fn sib(s: SIBSS, reg: SIBReg, idx: SIBIndex) -> u8 {
+    ((s as u8) << 6) | ((idx as u8) << 3) | (reg as u8)
 }
 
 #[derive(Debug, Clone)]
@@ -96,12 +136,36 @@ impl<E: Endian> Program<E> {
         let modrm32 = modrm32(Mod32::Direct, rm, reg);
         self.code.extend_from_slice(&[0x8B, modrm32]);
     }
-
+    pub fn mov_r_rm0(&mut self, reg: Reg32, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Disp00, rm, reg);
+        self.code.extend_from_slice(&[0x8B, modrm32]);
+    }
     pub fn mov_r_imm32(&mut self, reg: Reg32, imm: u32) -> u32 {
         self.code.push(0xB8 + reg as u8);
         let rel = self.addr();
         self.imm32(imm);
         rel
+    }
+    pub fn mov_r_sib_4(&mut self, reg: Reg32, base: SIBReg, idx: SIBIndex) {
+        let modrm32 = modrm32(Mod32::Disp00, RM32::SIB, reg);
+        let sib = sib(SIBSS::S4, base, idx);
+        self.code.extend_from_slice(&[0x8B, modrm32, sib]);
+    }
+    pub fn mov_r_sib8_4(&mut self, reg: Reg32, base: SIBReg, idx: SIBIndex, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, RM32::SIB, reg);
+        let sib = sib(SIBSS::S4, base, idx);
+        self.code.extend_from_slice(&[0x8B, modrm32, sib, disp as u8]);
+    }
+
+    pub fn lea_r_rm8(&mut self, reg: Reg32, rm: RM32, disp: i8) {
+        let modrm32 = modrm32(Mod32::Disp08, rm, reg);
+        self.code.extend_from_slice(&[0x8D, modrm32, disp as u8]);
+    }
+    pub fn lea_r_sib(&mut self, reg: Reg32, scale: SIBSS, index: SIBIndex) {
+        let modrm32 = modrm32(Mod32::Disp00, RM32::SIB, reg);
+        let sib = sib(scale, SIBReg::EBP, index);
+        self.code.extend_from_slice(&[0x8D, modrm32, sib]);
+        self.imm32(0);
     }
 
     pub fn add_eax_imm32(&mut self, imm: u32) {
@@ -267,6 +331,10 @@ impl<E: Endian> Program<E> {
     pub fn push_rm8(&mut self, rm: RM32, disp: i8) {
         let modrm32 = modrm32(Mod32::Disp08, rm, Reg32::ESI);
         self.code.extend_from_slice(&[0xFF, modrm32, disp as u8]);
+    }
+    pub fn push_rm0(&mut self, rm: RM32) {
+        let modrm32 = modrm32(Mod32::Disp00, rm, Reg32::ESI);
+        self.code.extend_from_slice(&[0xFF, modrm32]);
     }
 
     pub fn call_rel32(&mut self, rel: i32) -> u32 {

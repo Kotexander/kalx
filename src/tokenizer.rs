@@ -24,19 +24,6 @@ pub enum Type {
     Array(Box<Self>),
 }
 impl Type {
-    pub fn parse(typ: &str) -> Option<Self> {
-        let typ = match typ {
-            "u32" => Self::U32,
-            "u8" => Self::U8,
-            "str" => Self::String,
-            "bool" => Self::Bool,
-            "void" => Self::Void,
-            _ => {
-                return None;
-            }
-        };
-        Some(typ)
-    }
     pub fn size(&self) -> u32 {
         match self {
             Type::String => 4,
@@ -69,8 +56,8 @@ impl TryFrom<&str> for Type {
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Ptr(t) => write!(f, "{t}"),
-            Type::Array(t) => write!(f, "{t}"),
+            Type::Ptr(t) => write!(f, "#{t}"),
+            Type::Array(t) => write!(f, "[{t}]"),
             _ => {
                 let s = Self::MAPPING
                     .iter()
@@ -219,7 +206,7 @@ impl Token {
                 Self::String(Rc::new(string))
             }
             // type
-            else if let Some(typ) = Type::parse(&token) {
+            else if let Ok(typ) = Type::try_from(token.as_str()) {
                 Self::Type(typ)
             }
             // number

@@ -111,7 +111,7 @@ impl<'a> AllVars<'a> {
 }
 
 fn analyse_expr(
-    expr: &Expression,
+    expr: &mut Expression,
     funs: &DeclaredFuns,
     all_vars: &AllVars<'_>,
 ) -> Result<Type, String> {
@@ -123,8 +123,8 @@ fn analyse_expr(
             None => Err(format!("undefined variable `{id}`")),
         },
         Expression::Operation { lhs, op, rhs } => {
-            let lhs_type = analyse_expr(lhs, funs, all_vars)?;
-            let rhs_type = analyse_expr(rhs, funs, all_vars)?;
+            let lhs_type = analyse_expr(Rc::get_mut(lhs).unwrap(), funs, all_vars)?;
+            let rhs_type = analyse_expr(Rc::get_mut(rhs).unwrap(), funs, all_vars)?;
 
             if lhs_type == rhs_type {
                 let typ = if op.is_bool_op() {
@@ -139,12 +139,13 @@ fn analyse_expr(
                 ))
             }
         }
-        Expression::Index { base: expr, index } => {
-            let typ = analyse_expr(expr, funs, all_vars)?;
+        Expression::Index { base: expr, index, size } => {
+            let typ = analyse_expr(Rc::get_mut(expr).unwrap(), funs, all_vars)?;
             if let Type::Array(typ) = typ {
-                let i = analyse_expr(index, funs, all_vars)?;
+                let i = analyse_expr(Rc::get_mut(index).unwrap(), funs, all_vars)?;
     
                 if i == Type::U32 {
+                    *size = typ.size();
                     Ok(*typ)
                 } else {
                     Err(format!("index must have type of `u32` but got `{i}`"))
@@ -156,8 +157,8 @@ fn analyse_expr(
         }
         Expression::FunctionCall { name, args } => {
             let mut arg_typs = vec![];
-            for expr in args.iter() {
-                let typ = analyse_expr(expr, funs, all_vars)?;
+            for expr in args.iter_mut() {
+                let typ = analyse_expr(Rc::get_mut(expr).unwrap(), funs, all_vars)?;
                 arg_typs.push(typ);
             }
             match funs.get(name) {
@@ -175,7 +176,7 @@ fn analyse_expr(
             }
         }
         Expression::Deref(expr) => {
-            let typ = analyse_expr(expr, funs, all_vars)?;
+            let typ = analyse_expr(Rc::get_mut(expr).unwrap(), funs, all_vars)?;
             if let Type::Ptr(typ) = typ {
                 Ok(*typ)
             }
@@ -196,7 +197,7 @@ fn analyse_instruction(
     match instruction {
         Instruction::Declare { id, value } => {
             if !all_vars.contains(id) {
-                let typ = analyse_expr(value, funs, &all_vars)?;
+                let typ = analyse_expr(Rc::get_mut(value).unwrap(), funs, &all_vars)?;
                 if typ == Type::Void {
                     Err(format!("can't declare `{id}` as having type of `void`"))
                 } else {
@@ -211,7 +212,7 @@ fn analyse_instruction(
         }
         Instruction::Assign { id, value } => {
             if let Some(var) = all_vars.get(id) {
-                let typ = analyse_expr(value, funs, &all_vars)?;
+                let typ = analyse_expr(Rc::get_mut(value).unwrap(), funs, &all_vars)?;
                 if var == typ {
                     Ok(())
                 } else {
@@ -224,12 +225,12 @@ fn analyse_instruction(
             }
         }
         Instruction::Expr(expr) => {
-            analyse_expr(expr, funs, &all_vars)?;
+            analyse_expr(Rc::get_mut(expr).unwrap(), funs, &all_vars)?;
             Ok(())
         }
         Instruction::Loop(block) => analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars),
         Instruction::While { expr, block } => {
-            let typ = analyse_expr(expr, funs, &all_vars)?;
+            let typ = analyse_expr(Rc::get_mut(expr).unwrap(), funs, &all_vars)?;
             if typ != Type::Bool {
                 return Err(format!("while loop expects type `bool` but got `{typ}`"));
             }
@@ -237,7 +238,7 @@ fn analyse_instruction(
         }
         Instruction::Block(block) => analyse_block(Rc::get_mut(block).unwrap(), funs, &all_vars),
         Instruction::If { expr, block } => {
-            let typ = analyse_expr(expr, funs, &all_vars)?;
+            let typ = analyse_expr(Rc::get_mut(expr).unwrap(), funs, &all_vars)?;
             if typ != Type::Bool {
                 return Err(format!("if statement expects type `bool` but got `{typ}`"));
             }

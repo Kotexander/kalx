@@ -22,6 +22,8 @@ main:
 
     cmp dword [ebp-12], 10000
 
+    mov eax, [ebp+eax*4+32];
+
     mov eax, 5
     pop ebp
     ret

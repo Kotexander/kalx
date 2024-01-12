@@ -12,7 +12,11 @@ pub enum Value {
     Num(u32),
     String(Rc<CString>),
     Deref(Box<Self>),
-    Index { base: Box<Self>, index: Box<Self> },
+    Index {
+        base: Box<Self>,
+        index: Box<Self>,
+        size: u32,
+    },
 }
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -21,8 +25,12 @@ impl Display for Value {
             Value::Temp(num) => write!(f, "_{num}"),
             Value::Num(num) => write!(f, "{num}"),
             Value::String(string) => write!(f, "{string:?}"),
-            Value::Deref(v) => write!(f, "@{v}"),
-            Value::Index { base: b, index: i } => write!(f, "{b}[{i}]"),
+            Value::Deref(v) => write!(f, "(@{v})"),
+            Value::Index {
+                base: b,
+                index: i,
+                size: s,
+            } => write!(f, "{b}[{s}*{i}]"),
         }
     }
 }
@@ -187,14 +195,18 @@ fn generate_temp_expr(code: &mut Block, expr: &parser::Expression, temp: &mut u3
             });
             value
         }
-        parser::Expression::Index { base, index } => {
+        parser::Expression::Index { base, index, size } => {
             let base_value = generate_temp_expr(code, base, temp);
             let index_value = generate_temp_expr(code, index, temp);
             let value = Value::Temp(*temp);
             *temp += 1;
             code.0.push(Instruction::Assign {
                 target: value.clone(),
-                value: Value::Index { base: Box::new(base_value), index: Box::new(index_value) },
+                value: Value::Index {
+                    base: Box::new(base_value),
+                    index: Box::new(index_value),
+                    size: *size,
+                },
             });
             value
         }
@@ -203,7 +215,17 @@ fn generate_temp_expr(code: &mut Block, expr: &parser::Expression, temp: &mut u3
         }
         parser::Expression::Deref(expr) => {
             let value = generate_temp_expr(code, expr, temp);
+            // if matches!(value, Value::Deref(_)) {
+            // let target = Value::Temp(*temp);
+            // *temp += 1;
+            // code.0.push(Instruction::Assign {
+            // target: target.clone(),
+            // value,
+            // });
+            // Value::Deref(Box::new(target))
+            // } else {
             Value::Deref(Box::new(value))
+            // }
         }
     }
 }
@@ -326,7 +348,18 @@ fn generate_expr(code: &mut Block, expr: &parser::Expression, target: Value, tem
                 rhs: rhs_value,
             });
         }
-        parser::Expression::Index { base: _, index: _ } => todo!(),
+        parser::Expression::Index { base, index, size } => {
+            let base_value = generate_temp_expr(code, base, temp);
+            let index_value = generate_temp_expr(code, index, temp);
+            code.0.push(Instruction::Assign {
+                target,
+                value: Value::Index {
+                    base: Box::new(base_value),
+                    index: Box::new(index_value),
+                    size: *size,
+                },
+            });
+        }
         parser::Expression::FunctionCall { name, args } => {
             let mut arg_values = vec![];
             for arg in args.iter() {
@@ -338,7 +371,10 @@ fn generate_expr(code: &mut Block, expr: &parser::Expression, target: Value, tem
                 args: arg_values,
             });
         }
-        parser::Expression::Deref(_) => todo!(),
+        parser::Expression::Deref(expr) => {
+            let value = generate_temp_expr(code, expr, temp);
+            code.0.push(Instruction::Assign { target, value });
+        }
     }
 }
 

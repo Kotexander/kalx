@@ -63,20 +63,20 @@ fn run<E: Endian>() -> Result<(), String> {
     optimizer::optimize(&mut functions);
     analyser::analyse(&mut functions)?;
 
-    let _ = std::fs::create_dir("dump");
+    let _ = std::fs::create_dir("output/dump");
     let mut reformated_file = String::new();
     for function in functions.iter() {
         reformated_file += &format!("{function}\n");
     }
-    let _ = std::fs::write("dump/main.kx.reformatted", reformated_file);
+    let _ = std::fs::write("output/dump/main.kx.reformatted", reformated_file);
     
     let ir_functions = ir::generate(functions);
     let mut ir_file = String::new();
     for function in ir_functions.iter() {
         ir_file += &format!("{function}");
     }
-    let _ = std::fs::write("dump/main.kx.ir", ir_file);
-    let (text, rel_info, funs) = x86_generator::generate::<E>(&ir_functions);
+    let _ = std::fs::write("output/dump/main.kx.ir", ir_file);
+    let (text, rel_info, funs) = x86_generator::generate::<E>(ir_functions);
     let processed_strs = process_strs(rel_info.strs);
 
     let ehsize = std::mem::size_of::<ELFHeader32<E>>() as u32;
@@ -240,6 +240,7 @@ fn write(bytes: &[u8]) {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
+    let _ = std::fs::create_dir("output");
     let mut file = std::fs::File::create("output/main.o").unwrap();
     let mut perms = file.metadata().unwrap().permissions();
     perms.set_mode(0o775);

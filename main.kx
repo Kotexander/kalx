@@ -1,5 +1,28 @@
 // extern printf(str, ...);
 
+fun main(argc: u32, argv: [str]) -> u8 {
+    var i = 0;
+    while i < argc {
+        printf("arg #%u: %s\n", i, argv[i]);
+        i = i + 1;
+    }
+
+    // var hello = "Hello world!";
+    // var bye = "Goodbye world!\n";
+    // printf("%s\n", hello);
+    // printf(bye);
+
+    // test();
+
+    // var ptr = #abc;
+    // var abc2 = @ptr;
+    // var cdecl = "c = %u\n";
+    // printf(cdecl, c);
+
+    // test("test num: %u\n", 42);
+    fibonacci(48);
+}
+
 fun test(void) -> void {
     var a = 3;
     var b = 5;
@@ -37,26 +60,6 @@ fun test(void) -> void {
     // // exit(0);
 
     // return 0;
-}
-
-fun main(argc: u32, argv: [#str]) -> u8 {
-    printf("num args: %u\n", argc);
-    // printf("first arg: %s\n", @argv);
-
-    var hello = "Hello world!";
-    var bye = "Goodbye world!\n";
-    printf("%s\n", hello);
-    printf(bye);
-
-    test();
-
-    // var ptr = #abc;
-    // var abc2 = @ptr;
-    // var cdecl = "c = %u\n";
-    // printf(cdecl, c);
-
-    // test("test num: %u\n", 42);
-    fibonacci(48);
 }
 
 fun fibonacci(i: u32) {
